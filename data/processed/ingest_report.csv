@@ -1,0 +1,5 @@
+file,rows_in,rows_out,reason,brand,model,release,price,display,battery,ram,storage,camera,os,weight,features
+data\raw\mobile.csv,8277,8277,,Brand,Model,Announced,Price,Display Diagonal,,RAM Type,,Camera Placement,,,
+data\raw\mysmartprice_mobile_dataset.csv,5263,5263,,,,release_date,price,display,battery_and_charging_speed,ram_and_storage,,rear_camera,operating_system,,
+data\raw\phone_dataset .csv,8628,8628,,brand,model,announced,,display_size,battery,RAM,,primary_camera,OS,weight_g,
+data\raw\processed_data news.csv,1715,1713,,,phone_brand,Year,price_USD,Display_Size,BATTERY,ram,storage,,OS,Weight,Features_Sensors

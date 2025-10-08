@@ -1,0 +1,101 @@
+ID,Brand,Model,Slug,ReleaseYear,PriceUSD,DisplayInches,Battery_mAh,RAM_GB,Storage_GB,MainCameraMP,OS,Weight_g,NotableFeatures,SourceFiles
+SYN0001,Apple,iPhone 16,apple-iphone-16,2024,1036.09,7.14,5700,16,256,48.0,iOS,175.9,5G; Foldable; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0002,Apple,iPhone 16 Plus,apple-iphone-16-plus,2024,699.7,7.19,5200,8,256,64.0,iOS,166.6,Fast charging; Foldable; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0003,Apple,iPhone 16 Pro,apple-iphone-16-pro,2024,1311.28,6.49,4450,16,1024,48.0,iOS,192.0,5G; Expandable storage; Fast charging,synthetic_2024_2025.csv
+SYN0004,Apple,iPhone 16 Pro Max,apple-iphone-16-pro-max,2024,729.95,7.08,5350,8,512,200.0,iOS,201.4,5G; Stylus support; Water/dust resistant,synthetic_2024_2025.csv
+SYN0005,Apple,iPhone 17,apple-iphone-17,2025,1504.34,6.68,5950,8,256,64.0,iOS,168.2,5G; Foldable; Stereo speakers; Stylus support; Water/dust resistant,synthetic_2024_2025.csv
+SYN0006,Apple,iPhone 17 Plus,apple-iphone-17-plus,2025,951.84,6.61,5600,8,128,12.0,iOS,234.1,Expandable storage; Fast charging; Foldable; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0007,Apple,iPhone 17 Pro,apple-iphone-17-pro,2025,1393.14,6.0,5500,12,512,12.0,iOS,208.6,Fast charging; Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0008,Apple,iPhone 17 Pro Max,apple-iphone-17-pro-max,2025,1204.12,6.4,5900,12,512,48.0,iOS,181.5,Expandable storage; Fast charging; eSIM,synthetic_2024_2025.csv
+SYN0009,Samsung,Galaxy S24,samsung-galaxy-s24,2024,288.29,6.73,6150,12,256,108.0,Android,182.5,5G; Expandable storage,synthetic_2024_2025.csv
+SYN0010,Samsung,Galaxy S24+,samsung-galaxy-s24,2024,1259.15,6.72,3850,12,128,64.0,Android,227.5,Expandable storage; Water/dust resistant; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0011,Samsung,Galaxy S24 Ultra,samsung-galaxy-s24-ultra,2024,782.88,6.96,5600,8,128,50.0,Android,194.2,Foldable; eSIM,synthetic_2024_2025.csv
+SYN0012,Samsung,Galaxy S25,samsung-galaxy-s25,2025,703.54,7.16,6150,8,256,50.0,Android,186.1,Foldable; Stylus support,synthetic_2024_2025.csv
+SYN0013,Samsung,Galaxy S25+,samsung-galaxy-s25,2025,597.31,7.08,4500,12,256,48.0,Android,234.0,5G; Expandable storage; Foldable; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0014,Samsung,Galaxy S25 Ultra,samsung-galaxy-s25-ultra,2025,708.73,6.72,3850,8,512,12.0,Android,175.6,5G; Fast charging; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0015,Samsung,Galaxy A55,samsung-galaxy-a55,2024,269.73,6.57,4500,8,128,12.0,Android,213.4,Expandable storage; Fast charging; Foldable; Stereo speakers; eSIM,synthetic_2024_2025.csv
+SYN0016,Samsung,Galaxy A16,samsung-galaxy-a16,2024,1404.87,7.04,5300,8,128,12.0,Android,201.2,Fast charging; Stylus support,synthetic_2024_2025.csv
+SYN0017,Google,Pixel 9,google-pixel-9,2024,770.22,6.35,5950,16,512,200.0,Android,219.6,Expandable storage; Foldable; Stylus support; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0018,Google,Pixel 9 Pro,google-pixel-9-pro,2024,580.18,6.76,5000,8,128,48.0,Android,213.4,Foldable; Stylus support; Water/dust resistant; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0019,Google,Pixel 9 Pro XL,google-pixel-9-pro-xl,2024,1096.19,6.74,3900,12,128,64.0,Android,200.6,5G; Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0020,Google,Pixel 10,google-pixel-10,2025,1003.91,6.93,5050,12,256,12.0,Android,178.7,Stylus support; eSIM,synthetic_2024_2025.csv
+SYN0021,Google,Pixel 10 Pro,google-pixel-10-pro,2025,722.65,7.05,5600,24,128,200.0,Android,232.7,Expandable storage; Fast charging; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0022,OnePlus,OnePlus 12,oneplus-oneplus-12,2024,586.69,6.12,4800,8,512,50.0,Android,204.9,5G; Fast charging; Stereo speakers; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0023,OnePlus,OnePlus 12R,oneplus-oneplus-12r,2024,1007.03,6.86,5200,8,256,108.0,Android,185.8,Fast charging; Foldable; Stylus support,synthetic_2024_2025.csv
+SYN0024,OnePlus,OnePlus 13,oneplus-oneplus-13,2025,819.92,6.15,3950,12,512,64.0,Android,227.1,5G; Expandable storage; Stereo speakers; eSIM,synthetic_2024_2025.csv
+SYN0025,OnePlus,OnePlus 13R,oneplus-oneplus-13r,2025,1085.38,6.99,4650,8,128,200.0,Android,202.6,Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0026,Xiaomi,Xiaomi 14,xiaomi-xiaomi-14,2024,275.81,5.97,6150,8,256,64.0,Android,174.3,Expandable storage; Foldable; eSIM,synthetic_2024_2025.csv
+SYN0027,Xiaomi,Xiaomi 14 Pro,xiaomi-xiaomi-14-pro,2024,221.82,7.15,4700,8,256,12.0,Android,177.1,Fast charging; Water/dust resistant,synthetic_2024_2025.csv
+SYN0028,Xiaomi,Xiaomi 15,xiaomi-xiaomi-15,2025,773.44,6.57,3800,12,256,64.0,Android,204.6,Expandable storage; Stylus support; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0029,Xiaomi,Xiaomi 15 Pro,xiaomi-xiaomi-15-pro,2025,479.27,7.17,3800,12,128,108.0,Android,198.1,5G; Water/dust resistant,synthetic_2024_2025.csv
+SYN0030,Xiaomi,Redmi Note 14 Pro,xiaomi-redmi-note-14-pro,2024,536.15,6.71,5150,16,256,64.0,Android,208.1,Expandable storage; Fast charging; Foldable; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0031,Sony,Xperia 1 VI,sony-xperia-1-vi,2024,1213.63,6.5,6100,16,256,12.0,Android,232.3,5G; Foldable; Stereo speakers,synthetic_2024_2025.csv
+SYN0032,Sony,Xperia 5 VI,sony-xperia-5-vi,2024,954.18,7.0,4850,8,128,64.0,Android,213.5,Fast charging; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0033,Sony,Xperia 1 VII,sony-xperia-1-vii,2025,1299.49,6.95,6000,12,128,12.0,Android,219.3,5G; Expandable storage; Fast charging; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0034,Sony,Xperia 5 VII,sony-xperia-5-vii,2025,1302.63,6.03,4400,12,256,12.0,Android,187.4,Expandable storage; Fast charging; Foldable; Wireless charging,synthetic_2024_2025.csv
+SYN0035,Motorola,Moto Edge 50,motorola-moto-edge-50,2024,482.92,7.14,5100,24,256,108.0,Android,171.4,5G; Expandable storage; Foldable; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0036,Motorola,Moto Edge 50 Pro,motorola-moto-edge-50-pro,2024,830.69,6.02,5650,24,1024,48.0,Android,195.9,Expandable storage; Foldable; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0037,Motorola,Moto Edge 60,motorola-moto-edge-60,2025,869.78,6.45,5550,6,512,48.0,Android,175.3,Stereo speakers; Stylus support,synthetic_2024_2025.csv
+SYN0038,Motorola,Moto G Stylus 2025,motorola-moto-g-stylus-2025,2024,925.15,6.67,5350,8,128,108.0,Android,191.5,5G; Expandable storage; Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0039,Nothing,Nothing Phone (3),nothing-nothing-phone-3,2024,684.74,6.86,3950,8,256,12.0,Android,212.7,Expandable storage; Foldable; Water/dust resistant; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0040,Nothing,Nothing Phone (3) Plus,nothing-nothing-phone-3-plus,2024,617.17,6.94,5800,24,128,108.0,Android,168.0,Fast charging; Foldable,synthetic_2024_2025.csv
+SYN0041,Asus,ROG Phone 9,asus-rog-phone-9,2024,1128.4,6.8,5100,24,256,50.0,Android,228.1,5G; Water/dust resistant,synthetic_2024_2025.csv
+SYN0042,Asus,ROG Phone 9 Ultimate,asus-rog-phone-9-ultimate,2024,1145.85,6.4,6050,8,128,64.0,Android,234.0,Foldable; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0043,Asus,Zenfone 11,asus-zenfone-11,2025,1409.93,6.97,4450,8,256,12.0,Android,194.3,5G; Expandable storage; Fast charging; Foldable; Stereo speakers,synthetic_2024_2025.csv
+SYN0044,Asus,Zenfone 11 Ultra,asus-zenfone-11-ultra,2025,1486.28,6.1,4600,12,128,50.0,Android,223.9,Expandable storage; Stereo speakers,synthetic_2024_2025.csv
+SYN0045,Oppo,Find X7,oppo-find-x7,2024,921.54,6.59,3800,24,256,108.0,Android,215.8,Fast charging; Stereo speakers; Stylus support,synthetic_2024_2025.csv
+SYN0046,Oppo,Find X7 Pro,oppo-find-x7-pro,2025,546.26,6.17,3600,12,256,64.0,Android,183.8,5G; Fast charging; Stereo speakers; eSIM,synthetic_2024_2025.csv
+SYN0047,Oppo,Reno12 Pro,oppo-reno12-pro,2024,1170.18,6.01,4400,8,128,108.0,Android,208.4,5G; Expandable storage; Fast charging,synthetic_2024_2025.csv
+SYN0048,Oppo,Find X8,oppo-find-x8,2025,871.98,6.62,6100,16,128,200.0,Android,196.6,Expandable storage; Fast charging; Foldable; Stereo speakers,synthetic_2024_2025.csv
+SYN0049,Vivo,X100,vivo-x100,2025,1056.88,6.9,4550,12,1024,108.0,Android,189.3,Expandable storage; Foldable; Wireless charging,synthetic_2024_2025.csv
+SYN0050,Vivo,X100 Pro,vivo-x100-pro,2025,1085.89,6.57,5150,8,128,50.0,Android,222.5,Stereo speakers; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0051,Vivo,X100s,vivo-x100s,2025,626.84,6.55,5800,8,128,12.0,Android,213.1,Expandable storage; Foldable; Stylus support; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0052,Vivo,X200,vivo-x200,2025,487.41,6.38,4650,8,512,200.0,Android,197.4,Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0053,Vivo,V30 Pro,vivo-v30-pro,2024,701.67,6.59,4300,8,256,64.0,Android,166.4,Expandable storage; Water/dust resistant,synthetic_2024_2025.csv
+SYN0054,Realme,GT 6 Pro,realme-gt-6-pro,2024,614.51,6.78,3700,12,256,64.0,Android,202.6,Foldable; Stylus support; eSIM,synthetic_2024_2025.csv
+SYN0055,Realme,GT 7,realme-gt-7,2025,453.16,6.74,5250,8,256,200.0,Android,207.4,5G; Stylus support,synthetic_2024_2025.csv
+SYN0056,Realme,GT 7 Pro,realme-gt-7-pro,2025,398.57,6.13,4000,6,256,108.0,Android,233.8,5G; Expandable storage; Fast charging; eSIM,synthetic_2024_2025.csv
+SYN0057,Honor,Magic 6,honor-magic-6,2024,1176.56,6.54,5450,12,512,50.0,Android,205.0,5G; Fast charging; Stylus support; Water/dust resistant,synthetic_2024_2025.csv
+SYN0058,Honor,Magic 6 Pro,honor-magic-6-pro,2024,517.17,6.05,4850,16,128,200.0,Android,175.8,Expandable storage; Fast charging; Stereo speakers; Stylus support; eSIM,synthetic_2024_2025.csv
+SYN0059,Honor,Magic 7,honor-magic-7,2025,1189.96,6.32,3650,6,128,12.0,Android,218.2,Fast charging; Stereo speakers; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0060,Honor,Magic 7 Pro,honor-magic-7-pro,2025,1167.52,6.06,4100,16,128,50.0,Android,229.9,5G; Expandable storage; Fast charging; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0061,Huawei,P70,huawei-p70,2024,662.66,6.11,3800,8,256,200.0,Android,190.1,Stereo speakers; eSIM,synthetic_2024_2025.csv
+SYN0062,Huawei,P70 Pro,huawei-p70-pro,2024,1246.61,6.55,4800,8,128,48.0,Android,203.0,5G; Foldable; Stereo speakers; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0063,Huawei,Mate 70,huawei-mate-70,2025,1192.72,6.12,5900,12,256,50.0,Android,220.2,Expandable storage; Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0064,Huawei,Mate 70 Pro,huawei-mate-70-pro,2025,703.54,6.83,3800,16,128,200.0,Android,202.6,5G; Stylus support; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0065,Fairphone,Fairphone 5+,fairphone-fairphone-5,2024,815.68,6.84,5100,12,256,48.0,Android,182.6,5G; Fast charging,synthetic_2024_2025.csv
+SYN0066,Apple,iPhone 16  (Global),apple-iphone-16-global,2024,1519.67,6.08,4450,12,128,64.0,iOS,206.5,5G; Foldable; Stylus support; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0067,Apple,iPhone 16 Plus  (Global),apple-iphone-16-plus-global,2024,1393.12,6.39,4000,8,256,12.0,iOS,229.8,Expandable storage; Fast charging; Stereo speakers; Water/dust resistant,synthetic_2024_2025.csv
+SYN0068,Apple,iPhone 16 Pro  (Global),apple-iphone-16-pro-global,2024,1527.76,7.03,6100,12,128,12.0,iOS,217.1,Fast charging; Foldable; Stylus support,synthetic_2024_2025.csv
+SYN0069,Apple,iPhone 16 Pro Max  (Global),apple-iphone-16-pro-max-global,2024,1182.66,7.1,3650,12,256,50.0,iOS,196.7,Expandable storage; Fast charging; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0070,Apple,iPhone 17  (Global),apple-iphone-17-global,2025,1401.45,6.26,4850,6,256,12.0,iOS,232.3,Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0071,Apple,iPhone 17 Plus  (Global),apple-iphone-17-plus-global,2025,1234.85,5.99,4700,8,512,200.0,iOS,179.4,Stereo speakers; Stylus support,synthetic_2024_2025.csv
+SYN0072,Apple,iPhone 17 Pro  (Global),apple-iphone-17-pro-global,2025,1341.65,6.59,4950,12,256,50.0,iOS,175.9,5G; Stereo speakers,synthetic_2024_2025.csv
+SYN0073,Apple,iPhone 17 Pro Max  (Global),apple-iphone-17-pro-max-global,2025,1172.92,6.94,4950,16,512,12.0,iOS,203.6,Fast charging; Foldable; Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0074,Samsung,Galaxy S24  (Global),samsung-galaxy-s24-global,2024,1358.33,6.62,3950,6,128,200.0,Android,207.2,5G; Expandable storage; Water/dust resistant,synthetic_2024_2025.csv
+SYN0075,Samsung,Galaxy S24+  (Global),samsung-galaxy-s24-global,2024,1369.42,5.92,3900,12,512,108.0,Android,226.4,Foldable; Stylus support,synthetic_2024_2025.csv
+SYN0076,Samsung,Galaxy S24 Ultra  (Global),samsung-galaxy-s24-ultra-global,2024,723.62,6.67,4150,16,128,200.0,Android,190.4,Fast charging; Stylus support,synthetic_2024_2025.csv
+SYN0077,Samsung,Galaxy S25  (Global),samsung-galaxy-s25-global,2025,956.22,7.18,4700,16,256,50.0,Android,200.9,Stylus support; Water/dust resistant,synthetic_2024_2025.csv
+SYN0078,Samsung,Galaxy S25+  (Global),samsung-galaxy-s25-global,2025,776.13,6.07,5000,8,128,50.0,Android,222.6,Expandable storage; Fast charging; Foldable; Stylus support; Water/dust resistant,synthetic_2024_2025.csv
+SYN0079,Samsung,Galaxy S25 Ultra  (Global),samsung-galaxy-s25-ultra-global,2025,870.83,6.84,5650,8,128,200.0,Android,216.3,Foldable; Stereo speakers; Water/dust resistant,synthetic_2024_2025.csv
+SYN0080,Samsung,Galaxy A55  (Global),samsung-galaxy-a55-global,2024,727.92,6.57,3650,8,256,50.0,Android,171.3,Fast charging; Foldable; Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0081,Samsung,Galaxy A16  (Global),samsung-galaxy-a16-global,2024,957.01,6.52,5900,24,128,12.0,Android,183.9,5G; Foldable; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0082,Google,Pixel 9  (Global),google-pixel-9-global,2024,976.47,6.33,4850,12,128,12.0,Android,193.9,Stereo speakers; eSIM,synthetic_2024_2025.csv
+SYN0083,Google,Pixel 9 Pro  (Global),google-pixel-9-pro-global,2024,1054.76,6.25,5250,8,128,50.0,Android,229.2,Foldable; eSIM,synthetic_2024_2025.csv
+SYN0084,Google,Pixel 9 Pro XL  (Global),google-pixel-9-pro-xl-global,2024,1010.16,6.89,5400,12,512,12.0,Android,228.2,5G; Expandable storage; Foldable; Stereo speakers; Water/dust resistant,synthetic_2024_2025.csv
+SYN0085,Google,Pixel 10  (Global),google-pixel-10-global,2025,877.57,6.31,4300,12,128,48.0,Android,194.5,5G; Expandable storage,synthetic_2024_2025.csv
+SYN0086,Google,Pixel 10 Pro  (Global),google-pixel-10-pro-global,2025,1014.64,6.75,4750,8,128,48.0,Android,226.9,Fast charging; Foldable; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0087,OnePlus,OnePlus 12  (Global),oneplus-oneplus-12-global,2024,588.06,6.71,4350,8,512,48.0,Android,166.7,5G; Stereo speakers; Stylus support,synthetic_2024_2025.csv
+SYN0088,OnePlus,OnePlus 12R  (Global),oneplus-oneplus-12r-global,2024,1097.45,6.36,6000,8,256,12.0,Android,205.7,Expandable storage; Stereo speakers; Stylus support; Water/dust resistant; eSIM,synthetic_2024_2025.csv
+SYN0089,OnePlus,OnePlus 13  (Global),oneplus-oneplus-13-global,2025,351.51,6.51,5050,16,256,108.0,Android,167.9,Stereo speakers; Wireless charging,synthetic_2024_2025.csv
+SYN0090,OnePlus,OnePlus 13R  (Global),oneplus-oneplus-13r-global,2025,947.49,6.24,3850,24,512,50.0,Android,228.3,5G; Wireless charging; eSIM,synthetic_2024_2025.csv
+SYN0091,Xiaomi,Xiaomi 14  (Global),xiaomi-xiaomi-14-global,2024,406.51,6.98,5850,8,128,48.0,Android,167.6,5G; Fast charging; Stereo speakers,synthetic_2024_2025.csv
+SYN0092,Xiaomi,Xiaomi 14 Pro  (Global),xiaomi-xiaomi-14-pro-global,2024,994.41,7.11,6000,8,128,48.0,Android,199.4,Stylus support; Wireless charging,synthetic_2024_2025.csv
+SYN0093,Xiaomi,Xiaomi 15  (Global),xiaomi-xiaomi-15-global,2025,230.38,7.06,5400,6,512,50.0,Android,184.1,Expandable storage; eSIM,synthetic_2024_2025.csv
+SYN0094,Xiaomi,Xiaomi 15 Pro  (Global),xiaomi-xiaomi-15-pro-global,2025,788.72,6.62,5250,8,128,50.0,Android,215.6,5G; Fast charging; Water/dust resistant,synthetic_2024_2025.csv
+SYN0095,Xiaomi,Redmi Note 14 Pro  (Global),xiaomi-redmi-note-14-pro-global,2024,965.09,6.54,5150,12,512,50.0,Android,189.3,Fast charging; Foldable; Stereo speakers,synthetic_2024_2025.csv
+SYN0096,Sony,Xperia 1 VI  (Global),sony-xperia-1-vi-global,2024,1225.76,7.01,5950,12,512,12.0,Android,230.1,5G; Expandable storage; Fast charging; Water/dust resistant; Wireless charging,synthetic_2024_2025.csv
+SYN0097,Sony,Xperia 5 VI  (Global),sony-xperia-5-vi-global,2024,722.4,6.97,4050,16,128,48.0,Android,222.3,Expandable storage; Fast charging; Stereo speakers,synthetic_2024_2025.csv
+SYN0098,Sony,Xperia 1 VII  (Global),sony-xperia-1-vii-global,2025,791.68,6.39,4750,16,128,50.0,Android,218.3,5G; Stylus support; eSIM,synthetic_2024_2025.csv
+SYN0099,Sony,Xperia 5 VII  (Global),sony-xperia-5-vii-global,2025,781.01,7.12,5150,16,512,12.0,Android,219.0,Expandable storage; eSIM,synthetic_2024_2025.csv
+SYN0100,Motorola,Moto Edge 50  (Global),motorola-moto-edge-50-global,2024,977.79,7.16,5350,12,256,64.0,Android,166.7,Fast charging; Stereo speakers; Wireless charging; eSIM,synthetic_2024_2025.csv

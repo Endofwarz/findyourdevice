@@ -1,0 +1,8 @@
+pandas>=2.2
+numpy>=1.26
+python-slugify>=8.0
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+requests
