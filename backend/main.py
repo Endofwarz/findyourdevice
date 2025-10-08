@@ -7,18 +7,19 @@ if DEMO_SEED:
 
 import os, re, json, uuid, math
 from typing import Any, Dict, List, Optional, Tuple
+
+import pandas as pd
+import requests           
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
+
+app = FastAPI()
+
 ALLOWED_ORIGINS = [
   "http://127.0.0.1:5173",
   "http://localhost:5173",
   "https://<YOUR-FRONTEND>.vercel.app",
 ]
-import pandas as pd
-import requests
-import './index.css';
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
-
-app = FastAPI()
 
 @app.get("/")
 def root():
