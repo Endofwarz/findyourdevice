@@ -221,37 +221,30 @@ def _strict_budget_picks(picks: list[dict], budget) -> list[dict]:
 
 def _blurb_for_row(intent: dict, row: pd.Series) -> str | None:
 
-# --- Phase 2: Groq-first (optional) ---
-try:
-    if USE_LLM:
-        facts = {
-            "Brand": str(row.get("Brand") or "").strip(),
-            "Model": str(row.get("Model") or "").strip(),
-            "OS": str(row.get("OS") or "").strip(),
-            "ReleaseYear": int(row.get("ReleaseYear") or 0),
-            "PriceUSD": row.get("PriceUSD"),
-            "DisplayInches": row.get("DisplayInches"),
-            "Battery_mAh": row.get("Battery_mAh"),
-            "RAM_GB": row.get("RAM_GB"),
-            "Storage_GB": row.get("Storage_GB"),
-            "MainCameraMP": row.get("MainCameraMP"),
-        }
-        msgs = blurb_messages(intent, facts)
-        txt = chat_complete(msgs, max_tokens=140, temperature=0.4)
-
-        # 🟢 Add these two lines:
-        if txt:
-            print("[LLM] blurb via Groq ✅")
-        else:
-            print("[LLM] blurb fallback ❌")
-
-        if txt:
-            import re as _re
-            txt = _re.sub(r"\s+", " ", txt).strip()
+   # --- Phase 2: Groq-first (optional) ---
+    try:
+        if USE_LLM:
+            facts = {
+                "Brand": str(row.get("Brand") or "").strip(),
+                "Model": str(row.get("Model") or "").strip(),
+                "OS": str(row.get("OS") or "").strip(),
+                "ReleaseYear": int(row.get("ReleaseYear") or 0),
+                "PriceUSD": row.get("PriceUSD"),
+                "DisplayInches": row.get("DisplayInches"),
+                "Battery_mAh": row.get("Battery_mAh"),
+                "RAM_GB": row.get("RAM_GB"),
+                "Storage_GB": row.get("Storage_GB"),
+                "MainCameraMP": row.get("MainCameraMP"),
+            }
+            msgs = blurb_messages(intent, facts)
+            txt = chat_complete(msgs, max_tokens=140, temperature=0.4)
             if txt:
-                return txt[:500]
-except Exception as _e:
-    print("[LLM blurb] fallback:", _e)
+                import re as _re
+                txt = _re.sub(r"\s+", " ", txt).strip()
+                if txt:
+                    return txt[:500]
+    except Exception as _e:
+        print("[LLM blurb] fallback:", _e)
     """Try _compose_blurb -> llm_blurb -> None (UI will use fallback text)."""
     try:
         if "_compose_blurb" in globals():
