@@ -42,3 +42,17 @@ def _cache_write(key: str, value: Dict[str, Any]):
         p.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
     except:
         pass
+# backend/llm.py
+
+def chat_complete(prompt: str, context: str = None):
+    """
+    Fallback stub for Render deploys without Groq.
+    Returns a basic mock response so API stays functional.
+    """
+    print("⚠️ chat_complete(): Mock mode – no real Groq call")
+    return {
+        "text": f"Mock reply for: {prompt[:80]}",
+        "model": "mock",
+        "tokens": len(prompt.split()),
+        "timestamp": time.time(),
+    }
