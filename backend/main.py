@@ -15,6 +15,8 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
+from llm import chat_complete
+from prompts import blurb_messages, pros_cons_messages
 ALLOWED_ORIGINS = [
   "http://127.0.0.1:5173",
   "http://localhost:5173",
@@ -218,6 +220,31 @@ def _strict_budget_picks(picks: list[dict], budget) -> list[dict]:
     return out
 
 def _blurb_for_row(intent: dict, row: pd.Series) -> str | None:
+
+   # --- Phase 2: Groq-first (optional) ---
+    try:
+        if USE_LLM:
+            facts = {
+                "Brand": str(row.get("Brand") or "").strip(),
+                "Model": str(row.get("Model") or "").strip(),
+                "OS": str(row.get("OS") or "").strip(),
+                "ReleaseYear": int(row.get("ReleaseYear") or 0),
+                "PriceUSD": row.get("PriceUSD"),
+                "DisplayInches": row.get("DisplayInches"),
+                "Battery_mAh": row.get("Battery_mAh"),
+                "RAM_GB": row.get("RAM_GB"),
+                "Storage_GB": row.get("Storage_GB"),
+                "MainCameraMP": row.get("MainCameraMP"),
+            }
+            msgs = blurb_messages(intent, facts)
+            txt = chat_complete(msgs, max_tokens=140, temperature=0.4)
+            if txt:
+                import re as _re
+                txt = _re.sub(r"\s+", " ", txt).strip()
+                if txt:
+                    return txt[:500]
+    except Exception as _e:
+        print("[LLM blurb] fallback:", _e)
     """Try _compose_blurb -> llm_blurb -> None (UI will use fallback text)."""
     try:
         if "_compose_blurb" in globals():
@@ -463,11 +490,46 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
         # --- Pros/Cons via LLM (safe fallback) ---
+   # --- Pros/Cons (Groq first; fallback to existing Ollama/heuristics) ---
         pros, cons = [], []
         try:
-            pros, cons = llm_pros_cons(intent, row) or ([], [])
+            if USE_LLM:
+                facts = {
+                    "Brand": brand, "Model": model,
+                    "OS": row.get("OS"),
+                    "ReleaseYear": int(row.get("ReleaseYear") or 0),
+                    "PriceUSD": row.get("PriceUSD"),
+                    "DisplayInches": row.get("DisplayInches"),
+                    "Battery_mAh": row.get("Battery_mAh"),
+                    "RAM_GB": row.get("RAM_GB"),
+                    "Storage_GB": row.get("Storage_GB"),
+                    "MainCameraMP": row.get("MainCameraMP"),
+                    "NotableFeatures": row.get("NotableFeatures"),
+                }
+                msgs = pros_cons_messages(intent, facts)
+                txt = chat_complete(msgs, max_tokens=220, temperature=0.2)
+                if txt:
+                    import json as _json, re as _re
+                    j = None
+                    try:
+                        j = _json.loads(txt)
+                    except _json.JSONDecodeError:
+                        m = _re.search(r"\{.*\}", txt, _re.S)
+                        if m:
+                            try: j = _json.loads(m.group(0))
+                            except Exception: j = None
+                    if isinstance(j, dict):
+                        pros = [str(x) for x in (j.get("pros") or [])][:5]
+                        cons = [str(x) for x in (j.get("cons") or [])][:4]
+            # fallback to your current method if Groq absent or returned nothing
+            if not pros and not cons:
+                try:
+                    pros, cons = llm_pros_cons(intent, row) or ([], [])
+                except Exception:
+                    pros, cons = [], []
         except Exception as e:
-            print("[pros/cons] failed:", e)
+            print("[pros/cons] Groq+fallback failed:", e)
+            pros, cons = [], []
 
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
