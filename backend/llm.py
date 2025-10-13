@@ -44,15 +44,40 @@ def _cache_write(key: str, value: Dict[str, Any]):
         pass
 # backend/llm.py
 
-def chat_complete(prompt: str, context: str = None):
-    """
-    Fallback stub for Render deploys without Groq.
-    Returns a basic mock response so API stays functional.
-    """
-    print("⚠️ chat_complete(): Mock mode – no real Groq call")
-    return {
-        "text": f"Mock reply for: {prompt[:80]}",
-        "model": "mock",
-        "tokens": len(prompt.split()),
-        "timestamp": time.time(),
+# --- minimal Groq implementation; returns text ---
+def chat_complete(messages, *, model=None, max_tokens=256, temperature=0.6):
+    import os, requests, json, time
+    from hashlib import sha256
+
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
+    MODEL = model or os.getenv("LLM_MODEL_FINAL", "llama-3.3-70b-versatile")
+
+    # If key missing, return None (caller will fallback)
+    if not GROQ_API_KEY:
+        return None
+
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
     }
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+
+    # Simple retry (429/503)
+    backoff = 1.0
+    for _ in range(5):
+        r = requests.post(f"{LLM_BASE_URL}/chat/completions", headers=headers, json=payload, timeout=30)
+        if r.status_code == 200:
+            data = r.json()
+            return data["choices"][0]["message"]["content"]
+        if r.status_code in (429, 503):
+            retry_after = r.headers.get("retry-after")
+            time.sleep(float(retry_after) if retry_after else backoff)
+            backoff = min(backoff * 2, 10)
+            continue
+        break
+
+    # If we got here, give up and let caller fallback
+    return None
