@@ -20,7 +20,7 @@ from prompts import blurb_messages, pros_cons_messages
 ALLOWED_ORIGINS = [
   "http://127.0.0.1:5173",
   "http://localhost:5173",
-  "https://<YOUR-FRONTEND>.vercel.app",
+  "https://findyourdevice.vercel.app",
 ]
 
 @app.get("/")
@@ -29,7 +29,7 @@ def root():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173","http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1617,8 +1617,21 @@ def _answer_or_ask(intent: dict, skipped: set, user_text: str) -> tuple[Optional
 
 # ---------- chat/message ----------
 # ---------- chat/message ----------
+from time import time
+_RATE = {}  # ip -> [timestamps]
+def allow(ip, limit=30, window=60):
+    now = time()
+    rec = [t for t in _RATE.get(ip, []) if now - t < window]
+    rec.append(now)
+    _RATE[ip] = rec
+    return len(rec) <= limit
 @app.post("/chat/message", response_model=ChatMessageResp)
 def chat_message(req: ChatMessageReq):
+
+    ip = request.client.host
+    if not allow(ip):
+        return ChatMessageResp(session_id=req.session_id, intent=SESSIONS.get(req.session_id,{}).get("intent", DEFAULT_INTENT),
+                               ask="Too many requests—please slow down a bit.", picks=None, count=0, ui=ui_config())
     try:
         # ---- session bootstrap
         sess = SESSIONS.get(req.session_id) or {

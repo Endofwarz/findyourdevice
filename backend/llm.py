@@ -3,6 +3,22 @@ import os, json, time, hashlib, requests
 from pathlib import Path
 from typing import List, Dict, Any
 
+import requests, os, time
+
+GROQ_TIMEOUT = float(os.getenv("GROQ_TIMEOUT", "8"))   # seconds
+GROQ_RETRIES = int(os.getenv("GROQ_RETRIES", "1"))
+
+def _post_with_retry(url, json_payload, headers):
+    last_err = None
+    for attempt in range(GROQ_RETRIES + 1):
+        try:
+            return requests.post(url, json=json_payload, headers=headers, timeout=GROQ_TIMEOUT)
+        except Exception as e:
+            last_err = e
+            if attempt < GROQ_RETRIES:
+                time.sleep(0.5)
+    raise last_err
+
 # Compute our own paths (no config import needed)
 BACKEND_DIR = Path(__file__).resolve().parent
 
@@ -52,6 +68,7 @@ def chat_complete(messages, *, model=None, max_tokens=256, temperature=0.6):
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")
     LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     MODEL = model or os.getenv("LLM_MODEL_FINAL", "llama-3.3-70b-versatile")
+
 
     # If key missing, return None (caller will fallback)
     if not GROQ_API_KEY:
