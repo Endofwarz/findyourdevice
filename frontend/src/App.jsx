@@ -792,20 +792,20 @@ function ResultsView({ picks, blurb, onRestart }) {
             </div>
 
 {/* Live price / link (if backend provided one) */}
-{item.LiveOffer && (
+{featured?.LiveOffer && (
   <a
-    href={item.LiveOffer.url}
+    href={featured.LiveOffer.url}
     target="_blank"
     rel="noreferrer"
     className="mt-1 inline-block text-sm underline hover:no-underline"
     title="Open offer in a new tab"
   >
-    From {item.LiveOffer.currency}{" "}
-    {typeof item.LiveOffer.price === "number"
-      ? item.LiveOffer.price.toFixed(2)
-      : item.LiveOffer.price}{" "}
-    at {retailerLabel(item.LiveOffer.retailer)}
-    {item.LiveOffer.in_stock ? "" : " (out of stock)"}
+    From {featured.LiveOffer.currency}{" "}
+    {typeof featured.LiveOffer.price === "number"
+      ? featured.LiveOffer.price.toFixed(2)
+      : featured.LiveOffer.price}{" "}
+    at {retailerLabel(featured.LiveOffer.retailer)}
+    {featured.LiveOffer.in_stock ? "" : " (out of stock)"}
   </a>
 )}
 
@@ -820,18 +820,12 @@ function ResultsView({ picks, blurb, onRestart }) {
               <div className="grid md:grid-cols-2 gap-6 mt-5">
                 <div>
                   <div className="text-sm font-medium">Why it fits</div>
-<BulletList
-  items={featured?.Pros || []}
-  explain={(x) => findExplanation(featured, x, false)}
-/>
+<BulletList items={featured?.Pros || []} pick={featured} />
 
                 </div>
                 <div>
                   <div className="text-sm font-medium">Trade-offs</div>
-                  <BulletList
-  items={featured?.Cons || []}
-  explain={(x) => findExplanation(featured, x, true)}
-  isCon
+<BulletList items={featured?.Cons || []} pick={featured} isCon />
 />
                 </div>
               </div>
@@ -875,11 +869,11 @@ function ResultsView({ picks, blurb, onRestart }) {
                 <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
                   <div>
                     <div className="text-sm font-medium">Pros</div>
-<BulletList items={p?.Pros || []} explain={(x) => findExplanation(p, x, false)} />
+<BulletList items={p?.Pros || []} pick={p} />
                   </div>
                   <div>
                     <div className="text-sm font-medium">Cons</div>
-<BulletList items={p?.Cons || []} explain={(x) => findExplanation(p, x, true)} isCon />
+<BulletList items={p?.Cons || []} pick={p} isCon />
                   </div>
                 </div>
               ) : null}
