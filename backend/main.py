@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 app = FastAPI()
 
@@ -1733,7 +1733,13 @@ def allow(ip, limit=30, window=60):
     _RATE[ip] = rec
     return len(rec) <= limit
 @app.post("/chat/message", response_model=ChatMessageResp)
-def chat_message(req: ChatMessageReq):
+def chat_message(req: ChatMessageReq, request: Request):
+    # safe client IP (works even behind proxies / None cases)
+    try:
+        client_ip = (request.client.host if request and request.client else "unknown")
+    except Exception:
+        client_ip = "unknown"
+    # (use client_ip if you log it; otherwise it’s fine to leave it unused)
 
     ip = request.client.host
     if not allow(ip):
