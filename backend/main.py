@@ -245,6 +245,50 @@ SKIP_PAT = re.compile(r"\b(skip|none|no preference|idk|don'?t know)\b", re.I)
 def wants_to_skip(txt: str) -> bool:
     return bool(SKIP_PAT.search(txt or ""))
 
+def _json_safe_num(x, cast):
+    try:
+        v = cast(x)
+        # block NaN/inf
+        if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+            return None
+        return v
+    except Exception:
+        return None
+
+def _clean_pick(p: dict) -> dict:
+    """Ensure every field is JSON-safe (no NaN/inf/custom types)."""
+    q = dict(p or {})
+    # numeric fields
+    for k, caster in [
+        ("ReleaseYear", int), ("PriceUSD", float), ("DisplayInches", float),
+        ("Battery_mAh", int), ("RAM_GB", float), ("Storage_GB", float),
+        ("MainCameraMP", float), ("Weight_g", float),
+    ]:
+        if k in q:
+            q[k] = _json_safe_num(q[k], caster)
+    # strings: coerce non-strings to strings or None
+    for k in ["Brand","Model","OS","NotableFeatures","ImageURL","ImageLocal","BrandLogo"]:
+        if k in q:
+            q[k] = None if q[k] is None else str(q[k])
+    # arrays
+    for k in ["Pros","Cons"]:
+        if k in q and not isinstance(q[k], list):
+            q[k] = []
+        if isinstance(q.get(k), list):
+            q[k] = [str(x) for x in q[k] if x is not None][:10]
+    # LiveOffer object cleanup if present
+    if isinstance(q.get("LiveOffer"), dict):
+        offer = q["LiveOffer"]
+        q["LiveOffer"] = {
+            "retailer": str(offer.get("retailer") or ""),
+            "price": _json_safe_num(offer.get("price"), float),
+            "currency": str(offer.get("currency") or "USD"),
+            "url": str(offer.get("url") or ""),
+            "in_stock": bool(offer.get("in_stock")),
+        }
+    return q
+
+
 def _strict_budget_df(d: pd.DataFrame, budget) -> pd.DataFrame:
     """Return only rows with a known positive price <= budget. No-op when budget is None."""
     if d is None or d.empty or budget in (None, "", 0):
@@ -387,12 +431,12 @@ def _direct_results_response(session_id: str, intent: dict, skipped: set | None 
 
 
     return ChatMessageResp(
-        session_id=session_id,
-        intent=intent,
-        ask=ask,
-picks = [p for p in (picks or []) if isinstance(p, dict)],
-        count=count,
-        ui=ui_config(),
+    session_id=session_id,
+    intent=intent,
+    ask=ask,
+    picks=[_clean_pick(p) for p in (picks or []) if isinstance(p, dict)],
+    count=count,
+    ui=ui_config(),
     )
 
 
@@ -1840,12 +1884,12 @@ def chat_message(req: ChatMessageReq, request: Request):
 
         # ---- respond
         return ChatMessageResp(
-            session_id=req.session_id,
-            intent=intent,
-            ask=ask,
-picks = [p for p in (picks or []) if isinstance(p, dict)],
-            count=int(count or 0),
-            ui=ui_config(),
+    session_id=req.session_id,
+    intent=intent,
+    ask=ask,
+    picks=[_clean_pick(p) for p in (picks or []) if isinstance(p, dict)],
+    count=int(count or 0),
+    ui=ui_config(),
         )
 
     except Exception as e:
