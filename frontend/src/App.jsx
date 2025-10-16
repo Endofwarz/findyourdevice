@@ -46,6 +46,15 @@ async function patchChat(session_id, patch) {
   );
 }
 
+function retailerLabel(id) {
+  if (!id) return "retailer";
+  const m = String(id).toLowerCase();
+  if (m === "ebay") return "eBay";
+  if (m === "amazon") return "Amazon";
+  if (m === "bestbuy") return "Best Buy";
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
 /* ------------------------- session hook ------------------------- */
 function useSession() {
   const [sid, setSid] = useState(null);
@@ -781,6 +790,24 @@ function ResultsView({ picks, blurb, onRestart }) {
               {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
               {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
             </div>
+
+{/* Live price / link (if backend provided one) */}
+{item.LiveOffer && (
+  <a
+    href={item.LiveOffer.url}
+    target="_blank"
+    rel="noreferrer"
+    className="mt-1 inline-block text-sm underline hover:no-underline"
+    title="Open offer in a new tab"
+  >
+    From {item.LiveOffer.currency}{" "}
+    {typeof item.LiveOffer.price === "number"
+      ? item.LiveOffer.price.toFixed(2)
+      : item.LiveOffer.price}{" "}
+    at {retailerLabel(item.LiveOffer.retailer)}
+    {item.LiveOffer.in_stock ? "" : " (out of stock)"}
+  </a>
+)}
 
             {/* Blurb callout */}
             {blurb ? (

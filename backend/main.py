@@ -36,6 +36,27 @@ app.add_middleware(
 )
 from pydantic import BaseModel
 
+
+import csv, pathlib
+
+def _load_youtube_signals(slug: str) -> tuple[list, list]:
+    """
+    Reads data/processed/reviews.csv and returns (pros, cons) for this slug, or ([], []).
+    """
+    path = pathlib.Path("data/processed/reviews.csv")
+    if not path.exists():
+        return [], []
+    try:
+        with path.open(encoding="utf-8") as f:
+            r = csv.DictReader(f)
+            for row in r:
+                if (row.get("slug") or "") == slug:
+                    pros = (row.get("pros") or "").split("|") if row.get("pros") else []
+                    cons = (row.get("cons") or "").split("|") if row.get("cons") else []
+                    return pros, cons
+    except Exception:
+        pass
+    return [], []
 # =========================
 # Config
 # =========================
@@ -262,6 +283,32 @@ def _blurb_for_row(intent: dict, row: pd.Series) -> str | None:
         pass
     return None
 
+
+
+import csv, pathlib
+
+def best_offer_for_slug(slug: str) -> dict | None:
+    path = pathlib.Path("data/processed/offers.csv")
+    if not path.exists():
+        return None
+    best = None
+    with path.open(encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            if row["slug"] == slug and row.get("price"):
+                try:
+                    p = float(row["price"])
+                except: 
+                    continue
+                if best is None or p < best["price"]:
+                    best = {
+                        "retailer": row["retailer"],
+                        "price": p,
+                        "currency": row.get("currency","USD"),
+                        "url": row["url"],
+                        "in_stock": row.get("in_stock") in ("True","true","1"),
+                    }
+    return best
 
 def _direct_results_response(session_id: str, intent: dict, skipped: set | None = None) -> ChatMessageResp:
     """Build results strictly from current intent with budget hard-guard and a personalized blurb."""
@@ -543,7 +590,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception:
                 return None
 
-        picks.append({
+        item = {
             "Brand": row.get("Brand"),
             "Model": row.get("Model"),
             "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
@@ -564,7 +611,38 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
             "Pros": pros,
             "Cons": cons,
-        })
+        }
+
+        # >>> attach live offer, if available
+        try:
+            offer = best_offer_for_slug(slug)
+            if offer:
+                item["LiveOffer"] = offer
+        except Exception as _e:
+            print("[offers] attach failed:", _e)
+
+        picks.append(item)
+
+        # --- Merge YouTube review signals (if present) ---
+        try:
+            yt_pros, yt_cons = _load_youtube_signals(slug)
+            # extend, but avoid duplicates; then trim to a reasonable count
+            def _merge(a, b, limit):
+                out, seen = [], set()
+                for x in (a or []) + (b or []):
+                    s = (x or "").strip()
+                    if not s: 
+                        continue
+                    if s not in seen:
+                        seen.add(s); out.append(s)
+                    if len(out) >= limit:
+                        break
+                return out
+            pros = _merge(pros, yt_pros, 5)
+            cons = _merge(cons, yt_cons, 4)
+        except Exception as _e:
+            print("[yt-merge] failed:", _e)
+
 
     return picks
 
@@ -1472,7 +1550,7 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         camera  = float(row["MainCameraMP"]) if pd.notna(row.get("MainCameraMP"))  else None
         weight  = float(row["Weight_g"])     if pd.notna(row.get("Weight_g"))      else None
 
-        picks.append({
+        item = {
             "Brand": row.get("Brand"),
             "Model": row.get("Model"),
             "ReleaseYear": int(row.get("ReleaseYear") or 0),
@@ -1487,14 +1565,43 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
             "NotableFeatures": row.get("NotableFeatures"),
 
             # Images
-            "ImageURL": image_url,      # remote (may be None)
-            "ImageLocal": phone_local,  # /phones/<slug>.jpg|png if present
-            "BrandLogo": brand_logo,    # /brands/<brand>.png if present
+            "ImageURL": image_url,
+            "ImageLocal": phone_local,
+            "BrandLogo": brand_logo,
 
             # LLM outputs
             "Pros": pros,
             "Cons": cons,
-        })
+        }
+
+        # >>> attach live offer, if available
+        try:
+            offer = best_offer_for_slug(slug)
+            if offer:
+                item["LiveOffer"] = offer
+        except Exception as _e:
+            print("[offers] attach failed:", _e)
+
+        picks.append(item)
+        # --- Merge YouTube review signals (if present) ---
+        try:
+            yt_pros, yt_cons = _load_youtube_signals(slug)
+            # extend, but avoid duplicates; then trim to a reasonable count
+            def _merge(a, b, limit):
+                out, seen = [], set()
+                for x in (a or []) + (b or []):
+                    s = (x or "").strip()
+                    if not s: 
+                        continue
+                    if s not in seen:
+                        seen.add(s); out.append(s)
+                    if len(out) >= limit:
+                        break
+                return out
+            pros = _merge(pros, yt_pros, 5)
+            cons = _merge(cons, yt_cons, 4)
+        except Exception as _e:
+            print("[yt-merge] failed:", _e)
 
     return picks
 
