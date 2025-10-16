@@ -13,6 +13,27 @@ import requests
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
 
+# --- Safe client IP helper (define BEFORE endpoints) ---
+def _client_ip(request: Request) -> str:
+    try:
+        # Prefer the actual connection
+        c = getattr(request, "client", None)
+        if c and getattr(c, "host", None):
+            return c.host
+        # Respect proxies/load balancers if present
+        xfwd = None
+        try:
+            xfwd = request.headers.get("x-forwarded-for")
+        except Exception:
+            xfwd = None
+        if xfwd:
+            first = (xfwd.split(",")[0] or "").strip()
+            if first:
+                return first
+    except Exception:
+        pass
+    return "unknown"
+
 app = FastAPI()
 
 from llm import chat_complete
@@ -35,7 +56,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 from pydantic import BaseModel
-
+from fastapi import Request
 
 import csv, pathlib
 
@@ -70,12 +91,18 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # good balance offline
 # FastAPI
 # =========================
 app = FastAPI(title="Phone Finder API", version="2.0")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"]
+    allow_origins=["*"],  # or your explicit list if you prefer
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+@app.get("/")
+def root():
+    return {"ok": True, "docs": "/docs", "health": "/healthz"}
 # =========================
 # Session store
 # =========================
@@ -225,6 +252,13 @@ def _strict_budget_df(d: pd.DataFrame, budget) -> pd.DataFrame:
     price = pd.to_numeric(d["PriceUSD"], errors="coerce")
     return d.loc[(~price.isna()) & (price > 0) & (price <= float(budget))].copy()
 
+def _none_if_nan(x):
+    try:
+        import math
+        return None if (x is None or (isinstance(x, float) and math.isnan(x))) else x
+    except Exception:
+        return x
+
 def _strict_budget_picks(picks: list[dict], budget) -> list[dict]:
     """Keep only picks priced <= budget (when known)."""
     if not picks or budget in (None, "", 0):
@@ -350,11 +384,13 @@ def _direct_results_response(session_id: str, intent: dict, skipped: set | None 
     # save
     SESSIONS[session_id] = {"intent": intent, "ask_key": None, "skipped": skipped}
 
+
+
     return ChatMessageResp(
         session_id=session_id,
         intent=intent,
         ask=ask,
-        picks=picks,
+picks = [p for p in (picks or []) if isinstance(p, dict)],
         count=count,
         ui=ui_config(),
     )
@@ -1723,28 +1759,40 @@ def _answer_or_ask(intent: dict, skipped: set, user_text: str) -> tuple[Optional
     return (llm_blurb(intent, ranked.iloc[0]) or "Here’s what I recommend.", picks, int(len(d)))
 
 # ---------- chat/message ----------
-# ---------- chat/message ----------
 from time import time
+
 _RATE = {}  # ip -> [timestamps]
-def allow(ip, limit=30, window=60):
+
+
+def allow(ip: str | None, limit: int = 30, window: int = 60) -> bool:
+    """Simple sliding-window rate limiter keyed by IP (None-safe)."""
+    key = ip or "unknown"
     now = time()
-    rec = [t for t in _RATE.get(ip, []) if now - t < window]
+    rec = [t for t in _RATE.get(key, []) if now - t < window]
     rec.append(now)
-    _RATE[ip] = rec
+    _RATE[key] = rec
     return len(rec) <= limit
+
+
 @app.post("/chat/message", response_model=ChatMessageResp)
 def chat_message(req: ChatMessageReq, request: Request):
-    # safe client IP (works even behind proxies / None cases)
+    # --- Safe client IP (works with proxies and when request.client is None) ---
     try:
-        client_ip = (request.client.host if request and request.client else "unknown")
+        ip = _client_ip(request)  # uses your helper defined earlier
     except Exception:
-        client_ip = "unknown"
-    # (use client_ip if you log it; otherwise it’s fine to leave it unused)
+        ip = "unknown"
 
-    ip = request.client.host
+    # --- Throttle ---
     if not allow(ip):
-        return ChatMessageResp(session_id=req.session_id, intent=SESSIONS.get(req.session_id,{}).get("intent", DEFAULT_INTENT),
-                               ask="Too many requests—please slow down a bit.", picks=None, count=0, ui=ui_config())
+        return ChatMessageResp(
+            session_id=req.session_id,
+            intent=SESSIONS.get(req.session_id, {}).get("intent", DEFAULT_INTENT),
+            ask="Too many requests—please slow down a bit.",
+            picks=None,
+            count=0,
+            ui=ui_config(),
+        )
+
     try:
         # ---- session bootstrap
         sess = SESSIONS.get(req.session_id) or {
@@ -1795,7 +1843,7 @@ def chat_message(req: ChatMessageReq, request: Request):
             session_id=req.session_id,
             intent=intent,
             ask=ask,
-            picks=picks,
+picks = [p for p in (picks or []) if isinstance(p, dict)],
             count=int(count or 0),
             ui=ui_config(),
         )
