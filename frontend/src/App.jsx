@@ -17,33 +17,39 @@ const theme = {
 const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
 /* ------------------------- tiny fetch helpers ------------------------- */
-async function j(r) {
-  if (!r.ok) {
-    const t = await r.text().catch(() => `${r.status} ${r.statusText}`);
-    throw new Error(t || `${r.status} ${r.statusText}`);
+async function j(url, init) {
+  try {
+    const r = await fetch(url, init);
+    const text = await r.text(); // always read text first
+    if (!r.ok) {
+      const msg = text?.slice(0, 800) || `${r.status} ${r.statusText}`;
+      throw new Error(msg);
+    }
+    // try parse JSON, but don’t crash the UI if it isn’t JSON
+    try { return JSON.parse(text); } catch { throw new Error(text || "Invalid JSON"); }
+  } catch (e) {
+    // surface to the UI
+    console.error("API error:", e?.message || e);
+    throw e;
   }
-  return r.json();
 }
+
 async function startChat() {
-  return j(await fetch(`${API}/chat/start`, { method: "POST" }));
+  return j(`${API}/chat/start`, { method: "POST" });
 }
 async function msgChat(session_id, message) {
-  return j(
-    await fetch(`${API}/chat/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id, message }),
-    })
-  );
+  return j(`${API}/chat/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id, message }),
+  });
 }
 async function patchChat(session_id, patch) {
-  return j(
-    await fetch(`${API}/chat/patch`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id, patch }),
-    })
-  );
+  return j(`${API}/chat/patch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id, patch }),
+  });
 }
 
 function retailerLabel(id) {
@@ -63,40 +69,54 @@ function useSession() {
   const [ui, setUi] = useState(null);
   const [messages, setMessages] = useState([]);
   const [thinking, setThinking] = useState(false);
-  const [blurb, setBlurb] = useState(null);  // NEW
+  const [blurb, setBlurb] = useState(null);
 
   const start = async () => {
-    const res = await startChat();
-    setSid(res.session_id);
-    setMessages([{ from: "assistant", text: res.message }]);
-    setUi(res.ui || null);
-    setPicks(null);
-    setBlurb(null);                           // NEW
+    try {
+      const res = await startChat();
+      setSid(res.session_id);
+      setMessages([{ from: "assistant", text: res.message }]);
+      setUi(res.ui || null);
+      setPicks(null);
+      setBlurb(null);
+    } catch (e) {
+      alert("Failed to start chat:\n" + (e?.message || e));
+    }
   };
 
   const send = async (text) => {
     if (!sid) return;
     setMessages((m) => [...m, { from: "user", text }]);
-    const res = await msgChat(sid, text);
-    setUi(res.ui || null);
-    setIntent(res.intent || {});
-    if (res.picks) setPicks(res.picks);
-    if (res.ask)   setBlurb(res.ask);         // NEW
-    if (res.ask)   setMessages((m) => [...m, { from: "assistant", text: res.ask }]);
+    try {
+      const res = await msgChat(sid, text);
+      setUi(res.ui || null);
+      setIntent(res.intent || {});
+      if (res.picks) setPicks(res.picks);
+      if (res.ask)   setBlurb(res.ask);
+      if (res.ask)   setMessages((m) => [...m, { from: "assistant", text: res.ask }]);
+    } catch (e) {
+      setMessages((m) => [...m, { from: "assistant", text: "Sorry—request failed." }]);
+      alert("Request failed:\n" + (e?.message || e));
+    }
   };
 
   const patch = async (partial) => {
     if (!sid) return;
-    const res = await patchChat(sid, partial);
-    setUi(res.ui || null);
-    setIntent(res.intent || {});
-    if (res.picks) setPicks(res.picks);
-    if (res.ask)   setBlurb(res.ask);         // NEW (often null)
-    if (res.ask)   setMessages((m) => [...m, { from: "assistant", text: res.ask }]);
+    try {
+      const res = await patchChat(sid, partial);
+      setUi(res.ui || null);
+      setIntent(res.intent || {});
+      if (res.picks) setPicks(res.picks);
+      if (res.ask)   setBlurb(res.ask);
+      if (res.ask)   setMessages((m) => [...m, { from: "assistant", text: res.ask }]);
+    } catch (e) {
+      alert("Update failed:\n" + (e?.message || e));
+    }
   };
 
-  return { sid, intent, picks, ui, messages, thinking, setThinking, blurb, start, send, patch }; // NEW: blurb
+  return { sid, intent, picks, ui, messages, thinking, setThinking, blurb, start, send, patch };
 }
+
 
 
 
@@ -164,14 +184,18 @@ export default function App() {
 
   useEffect(() => { start(); }, []);
 
-  const finishAndSearch = async () => {
-    setThinking(true);
-    await new Promise((r) => setTimeout(r, 900));
+const finishAndSearch = async () => {
+  setThinking(true);
+  try {
+    await new Promise((r) => setTimeout(r, 300)); // small UX delay only
     await send("show results");
-    setThinking(false);
     setView("results");
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+  } finally {
+    setThinking(false);
+  }
+};
+
 
   const onNext = async () => {
     if (freeText.trim()) {
@@ -340,28 +364,34 @@ export default function App() {
                   placeholder="E.g., I actually prefer iOS, and I can spend up to $900."
                   value={refineText}
                   onChange={(e) => setRefineText(e.target.value)}
-                  onKeyDown={async (e) => {
-                    if (e.key === "Enter" && refineText.trim()) {
-                      setThinking(true);
-                      await send(refineText.trim());
-                      await send("show results");
-                      setThinking(false);
-                      setRefineText("");
-                      window.scrollTo({ top: 0, behavior: "smooth" });
-                    }
-                  }}
+onKeyDown={async (e) => {
+  if (e.key === "Enter" && refineText.trim()) {
+    setThinking(true);
+    try {
+      await send(refineText.trim());
+      await send("show results");
+      setRefineText("");
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } finally {
+      setThinking(false);
+    }
+  }
+}}
                 />
                 <button
                   className="px-5 py-3 rounded-2xl bg-black text-white"
-                  onClick={async () => {
-                    if (!refineText.trim()) return;
-                    setThinking(true);
-                    await send(refineText.trim());
-                    await send("show results");
-                    setThinking(false);
-                    setRefineText("");
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
+onClick={async () => {
+  if (!refineText.trim()) return;
+  setThinking(true);
+  try {
+    await send(refineText.trim());
+    await send("show results");
+    setRefineText("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } finally {
+    setThinking(false);
+  }
+}}
                 >
                   Refine
                 </button>
