@@ -845,21 +845,18 @@ function ResultsView({ picks, blurb, onRestart }) {
                 {blurb}
               </div>
             ) : null}
-
-            {(featured?.Pros?.length || featured?.Cons?.length) ? (
-              <div className="grid md:grid-cols-2 gap-6 mt-5">
-                <div>
-                  <div className="text-sm font-medium">Why it fits</div>
-<BulletList items={featured?.Pros || []} pick={featured} />
-
-                </div>
-                <div>
-                  <div className="text-sm font-medium">Trade-offs</div>
-<BulletList items={featured?.Cons || []} pick={featured} isCon />
-/>
-                </div>
-              </div>
-            ) : null}
+{(featured?.Pros?.length || featured?.Cons?.length) ? (
+  <div className="grid md:grid-cols-2 gap-6 mt-5">
+    <div>
+      <div className="text-sm font-medium">Why it fits</div>
+      <BulletList items={featured?.Pros || []} pick={featured} />
+    </div>
+    <div>
+      <div className="text-sm font-medium">Trade-offs</div>
+      <BulletList items={featured?.Cons || []} pick={featured} isCon />
+    </div>
+  </div>
+) : null}
           </div>
         </div>
       </div>

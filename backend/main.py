@@ -7,11 +7,11 @@ if DEMO_SEED:
 
 import os, re, json, uuid, math
 from typing import Any, Dict, List, Optional, Tuple
-import time  # needed by _build_picks_from_df
 import pandas as pd
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
+import time as _t  # use monotonic/real time safely
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
 # --- Safe client IP helper (define BEFORE endpoints) ---
@@ -35,7 +35,7 @@ def _client_ip(request: Request) -> str:
         pass
     return "unknown"
 
-app = FastAPI()
+app = FastAPI(title="Phone Finder API", version="2.0")
 
 from llm import chat_complete
 from prompts import blurb_messages, pros_cons_messages
@@ -326,7 +326,6 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # good balance offline
 # =========================
 # FastAPI
 # =========================
-app = FastAPI(title="Phone Finder API", version="2.0")
 
 app.add_middleware(
     CORSMiddleware,
