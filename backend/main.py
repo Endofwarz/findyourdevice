@@ -545,43 +545,39 @@ def candidates_multi(intent: dict) -> tuple[pd.DataFrame, dict, str]:
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     """
-    Construct pick cards from a DataFrame.
-    - Uses Wikipedia image (best-effort) + local assets
-    - Pros/cons via LLM (if enabled) with YT merge
-    - Align bullets to intent
-    - Adds optional diagnostics in item["_diag"] when DIAG=1
+    Non-invasive builder with local brand/phone assets + remote image + pros/cons.
+    Keeps the same signature so existing call sites don't change.
     """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
-    # Rank + dedupe
+    # Rank + dedupe like before
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
         print("[rank_df] failed:", e)
         ranked = d
     try:
-        ranked = unique_topn(ranked, 6)
+        ranked = unique_topn(ranked, 6)  # show a few more; UI will cut as needed
     except Exception as e:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
 
     for _, row in ranked.iterrows():
-        t0 = time.time()
-        diag = {"yt_rows": 0, "yt_used": False, "llm_used": False, "llm_ms": 0, "explain": False}
-
-        # Remote image
+        # --- Remote image (best-effort) ---
+        image_url = None
         try:
             image_url = fetch_phone_image_url(str(row.get("Brand") or ""), str(row.get("Model") or ""))
         except Exception as e:
             print("[image] fetch_phone_image_url failed:", e)
-            image_url = None
 
-        # Assets + slug
+        # --- Local offline assets (public/phones, public/brands) ---
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         slug = row.get("Slug")
+
+        # guard NaN slugs
         try:
             is_nan_slug = pd.isna(slug)
         except Exception:
@@ -593,10 +589,11 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
         )
+
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # Pros/cons via LLM → fallback
+        # --- Pros/Cons (LLM first; fallback heuristics) ---
         pros, cons = [], []
         try:
             if USE_LLM:
@@ -615,18 +612,20 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                 msgs = pros_cons_messages(intent, facts)
                 txt = chat_complete(msgs, max_tokens=220, temperature=0.2)
                 if txt:
+                    import json as _json, re as _re
                     j = None
                     try:
-                        j = json.loads(txt)
-                    except json.JSONDecodeError:
-                        m = re.search(r"\{.*\}", txt, re.S)
+                        j = _json.loads(txt)
+                    except _json.JSONDecodeError:
+                        m = _re.search(r"\{.*\}", txt, _re.S)
                         if m:
-                            try: j = json.loads(m.group(0))
-                            except Exception: j = None
+                            try:
+                                j = _json.loads(m.group(0))
+                            except Exception:
+                                j = None
                     if isinstance(j, dict):
                         pros = [str(x) for x in (j.get("pros") or [])][:5]
                         cons = [str(x) for x in (j.get("cons") or [])][:4]
-                        diag["llm_used"] = True
             if not pros and not cons:
                 try:
                     pros, cons = llm_pros_cons(intent, row) or ([], [])
@@ -635,35 +634,33 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as e:
             print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
-        finally:
-            diag["llm_ms"] = int((time.time() - t0) * 1000)
 
-        # Merge YouTube signals
+        # --- Merge YouTube review signals BEFORE building item ---
         try:
             yt_pros, yt_cons = _load_youtube_signals(slug)
             def _merge(a, b, limit):
                 out, seen = [], set()
                 for x in (a or []) + (b or []):
                     s = (x or "").strip()
-                    if not s: continue
+                    if not s:
+                        continue
                     if s not in seen:
                         seen.add(s); out.append(s)
-                    if len(out) >= limit: break
+                    if len(out) >= limit:
+                        break
                 return out
             pros = _merge(pros, yt_pros, 5)
             cons = _merge(cons, yt_cons, 4)
-            diag["yt_rows"] = len((yt_pros or [])) + len((yt_cons or []))
-            diag["yt_used"] = diag["yt_rows"] > 0
         except Exception as _e:
             print("[yt-merge] failed:", _e)
 
-        # Align bullets to intent
+        # --- Align bullets to the user's intent ---
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # Build item
+        # --- Build item safely (after merges) ---
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -690,7 +687,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons,
         }
 
-        # Live offer
+        # Live offer (if present)
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -698,15 +695,11 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
-        # Tooltips
+        # Tooltip explanations
         try:
             item["Explain"] = attach_explanations(intent, row, pros, cons)
-            diag["explain"] = bool(item.get("Explain"))
         except Exception as _e:
             print("[explain] failed:", _e)
-
-        if DIAG:
-            item["_diag"] = diag
 
         picks.append(item)
 
@@ -1800,7 +1793,6 @@ def _answer_or_ask(intent: dict, skipped: set, user_text: str) -> tuple[Optional
     return (llm_blurb(intent, ranked.iloc[0]) or "Here’s what I recommend.", picks, int(len(d)))
 
 # ---------- chat/message ----------
-from time import time
 
 _RATE = {}  # ip -> [timestamps]
 
