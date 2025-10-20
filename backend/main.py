@@ -616,8 +616,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # --- Pros/Cons via LLM (safe fallback) ---
-   # --- Pros/Cons (Groq first; fallback to existing Ollama/heuristics) ---
+        # --- Pros/Cons (Groq/LLM first; fallback heuristics) ---
         pros, cons = [], []
         try:
             if USE_LLM:
@@ -648,22 +647,41 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                     if isinstance(j, dict):
                         pros = [str(x) for x in (j.get("pros") or [])][:5]
                         cons = [str(x) for x in (j.get("cons") or [])][:4]
-            # fallback to your current method if Groq absent or returned nothing
             if not pros and not cons:
                 try:
                     pros, cons = llm_pros_cons(intent, row) or ([], [])
                 except Exception:
                     pros, cons = [], []
         except Exception as e:
-            print("[pros/cons] Groq+fallback failed:", e)
+            print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
 
+        # --- Merge YouTube review signals BEFORE building item ---
+        try:
+            yt_pros, yt_cons = _load_youtube_signals(slug)
+            def _merge(a, b, limit):
+                out, seen = [], set()
+                for x in (a or []) + (b or []):
+                    s = (x or "").strip()
+                    if not s:
+                        continue
+                    if s not in seen:
+                        seen.add(s); out.append(s)
+                    if len(out) >= limit:
+                        break
+                return out
+            pros = _merge(pros, yt_pros, 5)
+            cons = _merge(cons, yt_cons, 4)
+        except Exception as _e:
+            print("[yt-merge] failed:", _e)
+
+        # --- Align bullets to the user's intent ---
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # safe numeric coercion
+        # --- Build item safely (after merges) ---
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -683,12 +701,9 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "OS": row.get("OS"),
             "Weight_g": fnum(row.get("Weight_g"), float),
             "NotableFeatures": row.get("NotableFeatures"),
-
-            # Images (frontend prefers Local → URL → Logo)
             "ImageLocal": phone_local,
             "ImageURL": image_url,
             "BrandLogo": brand_logo,
-
             "Pros": pros,
             "Cons": cons,
         }
@@ -701,7 +716,14 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
+        # >>> attach human-friendly explanations (tooltips)
+        try:
+            item["Explain"] = attach_explanations(intent, row, pros, cons)
+        except Exception as _e:
+            print("[explain] failed:", _e)
+
         picks.append(item)
+
 
         # --- Merge YouTube review signals (if present) ---
         try:
@@ -1615,41 +1637,94 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         brand_key = brand.lower().replace(" ", "_")  # "OnePlus" -> "oneplus"
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")  # PNG logos you generated
 
-        # --- Pros/Cons via LLM (safe fallback) ---
+               # --- Pros/Cons (Groq/LLM first; fallback heuristics) ---
+        pros, cons = [], []
         try:
-            pros, cons = llm_pros_cons(intent, row) or ([], [])
-        except Exception:
+            if USE_LLM:
+                facts = {
+                    "Brand": brand, "Model": model,
+                    "OS": row.get("OS"),
+                    "ReleaseYear": int(row.get("ReleaseYear") or 0),
+                    "PriceUSD": row.get("PriceUSD"),
+                    "DisplayInches": row.get("DisplayInches"),
+                    "Battery_mAh": row.get("Battery_mAh"),
+                    "RAM_GB": row.get("RAM_GB"),
+                    "Storage_GB": row.get("Storage_GB"),
+                    "MainCameraMP": row.get("MainCameraMP"),
+                    "NotableFeatures": row.get("NotableFeatures"),
+                }
+                msgs = pros_cons_messages(intent, facts)
+                txt = chat_complete(msgs, max_tokens=220, temperature=0.2)
+                if txt:
+                    import json as _json, re as _re
+                    j = None
+                    try:
+                        j = _json.loads(txt)
+                    except _json.JSONDecodeError:
+                        m = _re.search(r"\{.*\}", txt, _re.S)
+                        if m:
+                            try: j = _json.loads(m.group(0))
+                            except Exception: j = None
+                    if isinstance(j, dict):
+                        pros = [str(x) for x in (j.get("pros") or [])][:5]
+                        cons = [str(x) for x in (j.get("cons") or [])][:4]
+            if not pros and not cons:
+                try:
+                    pros, cons = llm_pros_cons(intent, row) or ([], [])
+                except Exception:
+                    pros, cons = [], []
+        except Exception as e:
+            print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
 
-        # --- Build item safely (coerce only if not NaN) ---
-        price   = float(row["PriceUSD"])     if pd.notna(row.get("PriceUSD"))     else 0.0
-        display = float(row["DisplayInches"])if pd.notna(row.get("DisplayInches"))else None
-        battery = int(row["Battery_mAh"])    if pd.notna(row.get("Battery_mAh"))   else None
-        ram     = float(row["RAM_GB"])       if pd.notna(row.get("RAM_GB"))        else None
-        storage = float(row["Storage_GB"])   if pd.notna(row.get("Storage_GB"))    else None
-        camera  = float(row["MainCameraMP"]) if pd.notna(row.get("MainCameraMP"))  else None
-        weight  = float(row["Weight_g"])     if pd.notna(row.get("Weight_g"))      else None
+        # --- Merge YouTube review signals BEFORE building item ---
+        try:
+            yt_pros, yt_cons = _load_youtube_signals(slug)
+            def _merge(a, b, limit):
+                out, seen = [], set()
+                for x in (a or []) + (b or []):
+                    s = (x or "").strip()
+                    if not s:
+                        continue
+                    if s not in seen:
+                        seen.add(s); out.append(s)
+                    if len(out) >= limit:
+                        break
+                return out
+            pros = _merge(pros, yt_pros, 5)
+            cons = _merge(cons, yt_cons, 4)
+        except Exception as _e:
+            print("[yt-merge] failed:", _e)
+
+        # --- Align bullets to the user's intent ---
+        try:
+            pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
+        except Exception as e:
+            print("[pros/cons-filter] failed:", e)
+
+        # --- Build item safely (after merges) ---
+        def fnum(x, cast):
+            try:
+                return cast(x) if pd.notna(x) else None
+            except Exception:
+                return None
 
         item = {
             "Brand": row.get("Brand"),
             "Model": row.get("Model"),
-            "ReleaseYear": int(row.get("ReleaseYear") or 0),
-            "PriceUSD": price,
-            "DisplayInches": display,
-            "Battery_mAh": battery,
-            "RAM_GB": ram,
-            "Storage_GB": storage,
-            "MainCameraMP": camera,
+            "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
+            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
+            "DisplayInches": fnum(row.get("DisplayInches"), float),
+            "Battery_mAh": fnum(row.get("Battery_mAh"), int),
+            "RAM_GB": fnum(row.get("RAM_GB"), float),
+            "Storage_GB": fnum(row.get("Storage_GB"), float),
+            "MainCameraMP": fnum(row.get("MainCameraMP"), float),
             "OS": row.get("OS"),
-            "Weight_g": weight,
+            "Weight_g": fnum(row.get("Weight_g"), float),
             "NotableFeatures": row.get("NotableFeatures"),
-
-            # Images
-            "ImageURL": image_url,
             "ImageLocal": phone_local,
+            "ImageURL": image_url,
             "BrandLogo": brand_logo,
-
-            # LLM outputs
             "Pros": pros,
             "Cons": cons,
         }
@@ -1662,7 +1737,14 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
+        # >>> attach human-friendly explanations (tooltips)
+        try:
+            item["Explain"] = attach_explanations(intent, row, pros, cons)
+        except Exception as _e:
+            print("[explain] failed:", _e)
+
         picks.append(item)
+
         # --- Merge YouTube review signals (if present) ---
         try:
             yt_pros, yt_cons = _load_youtube_signals(slug)
