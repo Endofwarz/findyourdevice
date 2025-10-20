@@ -14,7 +14,29 @@ const theme = {
 };
 
 /* ------------------------- API base ------------------------- */
-const API = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
+/**
+ * Resolve the API base URL:
+ * - If VITE_API_BASE is set (e.g. in Vercel env), use it.
+ * - Else, if we’re on Vercel (or any https domain), fall back to an https API you host.
+ * - Else (local dev), use the local FastAPI.
+ */
+function resolveApiBase() {
+  const env = import.meta.env?.VITE_API_BASE?.trim();
+  if (env) return env;
+
+  const origin = window.location.origin;
+  const onVercel = /\.vercel\.app$/i.test(location.hostname);
+  const isHttps = location.protocol === "https:";
+
+  // 👉 EDIT THIS to your deployed API base
+  const PROD_API = "https://YOUR-FASTAPI-DOMAIN.example.com"; // must be HTTPS
+
+  if (onVercel || isHttps) return PROD_API;
+  return "http://127.0.0.1:8000"; // local dev
+}
+
+const API = resolveApiBase();
+
 
 /* ------------------------- tiny fetch helpers ------------------------- */
 async function j(url, init) {
