@@ -11,7 +11,7 @@ import pandas as pd
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
-import time as _t  # use monotonic/real time safely
+import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
 # --- Safe client IP helper (define BEFORE endpoints) ---
@@ -1997,13 +1997,16 @@ _RATE = {}  # ip -> [timestamps]
 
 
 def allow(ip: str | None, limit: int = 30, window: int = 60) -> bool:
-    """Simple sliding-window rate limiter keyed by IP (None-safe)."""
+    """
+    Simple sliding-window rate limiter keyed by IP (None-safe).
+    Uses epoch seconds from time.time().
+    """
     key = ip or "unknown"
-    now = time()
-    rec = [t for t in _RATE.get(key, []) if now - t < window]
-    rec.append(now)
-    _RATE[key] = rec
-    return len(rec) <= limit
+    now = _time.time()
+    recent = [t for t in _RATE.get(key, []) if now - t < window]
+    recent.append(now)
+    _RATE[key] = recent
+    return len(recent) <= limit
 
 
 @app.post("/chat/message", response_model=ChatMessageResp)
