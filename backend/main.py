@@ -7,7 +7,7 @@ if DEMO_SEED:
 
 import os, re, json, uuid, math
 from typing import Any, Dict, List, Optional, Tuple
-
+import time  # needed by _build_picks_from_df
 import pandas as pd
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
@@ -319,9 +319,11 @@ def _strict_budget_picks(picks: list[dict], budget) -> list[dict]:
             out.append(p)
     return out
 
-def _blurb_for_row(intent: dict, row: pd.Series) -> str | None:
-
-   # --- Phase 2: Groq-first (optional) ---
+def _blurb_for_row(intent: dict, row: pd.Series) -> Optional[str]:
+    """
+    Try LLM blurb (chat_complete) → local _compose_blurb → llm_blurb → None.
+    """
+    # LLM-first (Groq/OpenAI via chat_complete)
     try:
         if USE_LLM:
             facts = {
@@ -339,27 +341,28 @@ def _blurb_for_row(intent: dict, row: pd.Series) -> str | None:
             msgs = blurb_messages(intent, facts)
             txt = chat_complete(msgs, max_tokens=140, temperature=0.4)
             if txt:
-                import re as _re
-                txt = _re.sub(r"\s+", " ", txt).strip()
+                txt = re.sub(r"\s+", " ", txt).strip()
                 if txt:
                     return txt[:500]
     except Exception as _e:
         print("[LLM blurb] fallback:", _e)
-    """Try _compose_blurb -> llm_blurb -> None (UI will use fallback text)."""
+
+    # Local helper
     try:
-        if "_compose_blurb" in globals():
-            txt = _compose_blurb(intent, row)
-            if txt:
-                return txt
+        txt = _compose_blurb(intent, row)
+        if txt:
+            return txt
     except Exception:
         pass
+
+    # Optional alternate
     try:
-        if "llm_blurb" in globals():
-            txt = llm_blurb(intent, row)
-            if txt:
-                return txt
+        txt = llm_blurb(intent, row)
+        if txt:
+            return txt
     except Exception:
         pass
+
     return None
 
 
@@ -540,47 +543,26 @@ def candidates_multi(intent: dict) -> tuple[pd.DataFrame, dict, str]:
     base = df_all.sort_values(["ReleaseYear","PriceUSD"], ascending=[False, True], na_position="last")
     return base.head(30), i0, "fallback newest"
 
-    # 6) Relax minimums (soft)
-    i = dict(i0)
-    changed = False
-    if i.get("min_battery") not in (None, 0):
-        i["min_battery"] = max(0, int(i["min_battery"] * 0.9)); changed = True
-    if i.get("min_ram") not in (None, 0):
-        i["min_ram"] = max(1, int(i["min_ram"]) - 1); changed = True
-    if i.get("min_storage") not in (None, 0):
-        i["min_storage"] = max(16, int(i["min_storage"]) - 64); changed = True
-    if changed:
-        d = filt(i, False)
-        if len(d) >= 3:
-            return d, i, "relaxed minimums"
-
-    # 7) Drop budget entirely (soft). We'll still penalize over-budget in ranking.
-    i = dict(i0); i.pop("budget", None)
-    d = filt(i, False)
-    if len(d) >= 3:
-        return d, i, "ignored budget (penalize later)"
-
-    # 8) Fallback: newest then cheapest
-    base = df_all.sort_values(["ReleaseYear","PriceUSD"], ascending=[False, True], na_position="last")
-    return base.head(30), i0, "fallback newest"
-
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     """
-    Non-invasive builder with local brand/phone assets + remote image + pros/cons.
-    Keeps the same signature so existing call sites don't change.
+    Construct pick cards from a DataFrame.
+    - Uses Wikipedia image (best-effort) + local assets
+    - Pros/cons via LLM (if enabled) with YT merge
+    - Align bullets to intent
+    - Adds optional diagnostics in item["_diag"] when DIAG=1
     """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
-    # Rank + dedupe like before
+    # Rank + dedupe
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
         print("[rank_df] failed:", e)
         ranked = d
     try:
-        ranked = unique_topn(ranked, 6)  # show a few more; UI will cut as needed
+        ranked = unique_topn(ranked, 6)
     except Exception as e:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
@@ -588,38 +570,33 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     for _, row in ranked.iterrows():
         t0 = time.time()
         diag = {"yt_rows": 0, "yt_used": False, "llm_used": False, "llm_ms": 0, "explain": False}
-        # --- Remote image (best-effort) ---
-        image_url = None
+
+        # Remote image
         try:
             image_url = fetch_phone_image_url(str(row.get("Brand") or ""), str(row.get("Model") or ""))
         except Exception as e:
             print("[image] fetch_phone_image_url failed:", e)
+            image_url = None
 
-        # --- Local offline assets (public/phones, public/brands) ---
+        # Assets + slug
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         slug = row.get("Slug")
-
-        # guard NaN slugs
         try:
             is_nan_slug = pd.isna(slug)
         except Exception:
             is_nan_slug = False
-
         if not slug or is_nan_slug or str(slug).lower() == "nan":
             slug = _slugify(f"{brand}-{model}")
 
-        # /phones/<slug>.jpg|png
         phone_local = (
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
         )
-
-        # /brands/<brand>.png  (expects lowercase + underscores)
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # --- Pros/Cons (Groq/LLM first; fallback heuristics) ---
+        # Pros/cons via LLM → fallback
         pros, cons = [], []
         try:
             if USE_LLM:
@@ -638,18 +615,18 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                 msgs = pros_cons_messages(intent, facts)
                 txt = chat_complete(msgs, max_tokens=220, temperature=0.2)
                 if txt:
-                    import json as _json, re as _re
                     j = None
                     try:
-                        j = _json.loads(txt)
-                    except _json.JSONDecodeError:
-                        m = _re.search(r"\{.*\}", txt, _re.S)
+                        j = json.loads(txt)
+                    except json.JSONDecodeError:
+                        m = re.search(r"\{.*\}", txt, re.S)
                         if m:
-                            try: j = _json.loads(m.group(0))
+                            try: j = json.loads(m.group(0))
                             except Exception: j = None
                     if isinstance(j, dict):
                         pros = [str(x) for x in (j.get("pros") or [])][:5]
                         cons = [str(x) for x in (j.get("cons") or [])][:4]
+                        diag["llm_used"] = True
             if not pros and not cons:
                 try:
                     pros, cons = llm_pros_cons(intent, row) or ([], [])
@@ -658,37 +635,35 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as e:
             print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
-        diag["llm_used"] = True
-        diag["llm_ms"] = int((time.time() - t0) * 1000)
+        finally:
+            diag["llm_ms"] = int((time.time() - t0) * 1000)
 
-        # --- Merge YouTube review signals BEFORE building item ---
+        # Merge YouTube signals
         try:
             yt_pros, yt_cons = _load_youtube_signals(slug)
             def _merge(a, b, limit):
                 out, seen = [], set()
                 for x in (a or []) + (b or []):
                     s = (x or "").strip()
-                    if not s:
-                        continue
+                    if not s: continue
                     if s not in seen:
                         seen.add(s); out.append(s)
-                    if len(out) >= limit:
-                        break
+                    if len(out) >= limit: break
                 return out
             pros = _merge(pros, yt_pros, 5)
             cons = _merge(cons, yt_cons, 4)
+            diag["yt_rows"] = len((yt_pros or [])) + len((yt_cons or []))
+            diag["yt_used"] = diag["yt_rows"] > 0
         except Exception as _e:
             print("[yt-merge] failed:", _e)
-        diag["yt_rows"] = len((yt_pros or [])) + len((yt_cons or []))
-        diag["yt_used"] = diag["yt_rows"] > 0
 
-        # --- Align bullets to the user's intent ---
+        # Align bullets to intent
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # --- Build item safely (after merges) ---
+        # Build item
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -715,7 +690,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons,
         }
 
-        # >>> attach live offer, if available
+        # Live offer
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -723,37 +698,20 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
-        # >>> attach human-friendly explanations (tooltips)
+        # Tooltips
         try:
             item["Explain"] = attach_explanations(intent, row, pros, cons)
+            diag["explain"] = bool(item.get("Explain"))
         except Exception as _e:
             print("[explain] failed:", _e)
 
+        if DIAG:
+            item["_diag"] = diag
+
         picks.append(item)
 
-
-        # --- Merge YouTube review signals (if present) ---
-        try:
-            yt_pros, yt_cons = _load_youtube_signals(slug)
-            # extend, but avoid duplicates; then trim to a reasonable count
-            def _merge(a, b, limit):
-                out, seen = [], set()
-                for x in (a or []) + (b or []):
-                    s = (x or "").strip()
-                    if not s: 
-                        continue
-                    if s not in seen:
-                        seen.add(s); out.append(s)
-                    if len(out) >= limit:
-                        break
-                return out
-            pros = _merge(pros, yt_pros, 5)
-            cons = _merge(cons, yt_cons, 4)
-        except Exception as _e:
-            print("[yt-merge] failed:", _e)
-
-
     return picks
+
 
 
 @app.get("/yt/status")
@@ -852,58 +810,7 @@ def _labels_for_row(row: pd.Series) -> list[str]:
             labels.append(key.upper() if key in ["ip68","5g"] else key.title())
     return labels
 
-def attach_explanations(intent: dict, row: pd.Series, pros: list[str], cons: list[str]) -> dict:
-    """
-    Build a small map {label: explanation}. Prefer LLM JSON if available,
-    else fallback to STATIC_GLOSSARY patterns.
-    """
-    labels = _labels_for_row(row)
 
-    # Also scan pros/cons for common tokens
-    scans = (pros or []) + (cons or [])
-    low_scans = " ".join(scans).lower()
-    for kw in ["ram", "storage", "mah", "ip68", "wireless charging", "fast charging",
-               "esim", "5g", "telephoto", "ultrawide", "120hz"]:
-        if kw in low_scans and kw not in " ".join(labels).lower():
-            labels.append(kw.upper() if kw in ["ip68","5g"] else kw.title())
-
-    # Ask LLM for strict JSON mapping if possible
-    mapping = {}
-    try:
-        if USE_OLLAMA:
-            prompt = (
-                "Explain these phone terms simply for a non-technical shopper. "
-                "Return STRICT JSON object mapping each label to a short explanation (≤ 18 words). "
-                "No extra keys.\n"
-                f"Labels: {json.dumps(labels, ensure_ascii=False)}\n"
-                "JSON:"
-            )
-            txt = _ollama_generate(prompt, fmt_json=True, temperature=0.1) or "{}"
-            mapping = json.loads(txt)
-            # sanity trim
-            if not isinstance(mapping, dict): mapping = {}
-            for k in list(mapping.keys()):
-                v = str(mapping[k]).strip()
-                if not v: mapping.pop(k, None)
-                else: mapping[k] = v[:140]
-    except Exception:
-        mapping = {}
-
-    # Fallback fill using glossary
-    def gloss_for(label: str) -> str | None:
-        l = label.lower()
-        for key, exp in STATIC_GLOSSARY.items():
-            if key in l:
-                return exp
-        return None
-
-    for lab in labels:
-        if lab not in mapping:
-            g = gloss_for(lab)
-            if g:
-                mapping[lab] = g
-
-    return mapping
 
 
 # =========================
@@ -1162,37 +1069,6 @@ def filter_df_by_intent(df: pd.DataFrame, intent: Dict[str, Any], strict_budget:
         d = d.sort_values(["ReleaseYear", "PriceUSD"], ascending=[False, True], na_position="last")
 
     return d
-
-
-    # --- OS ---
-    if intent.get("os") and "OS" in d.columns:
-        s = str(intent["os"]).lower()
-        d = d[d["OS"].astype(str).str.lower().str.contains(s, na=False)]
-
-    # --- Year window ---
-    if intent.get("min_year") is not None and "ReleaseYear" in d.columns:
-        d = d[(d["ReleaseYear"].isna()) | (d["ReleaseYear"] >= int(intent["min_year"]))]
-    if intent.get("max_year") is not None and "ReleaseYear" in d.columns:
-        d = d[(d["ReleaseYear"].isna()) | (d["ReleaseYear"] <= int(intent["max_year"]))]
-
-    # --- Size (looser compact) ---
-    if "DisplayInches" in d.columns:
-        if intent.get("prefer_small") is True:
-            d = d[(d["DisplayInches"].isna()) | (d["DisplayInches"] <= compact_max)]
-        elif intent.get("prefer_large") is True:
-            d = d[(d["DisplayInches"].isna()) | (d["DisplayInches"] >= 6.7)]
-
-    # --- Minimums ---
-    if intent.get("min_battery") is not None and "Battery_mAh" in d.columns:
-        d = d[(d["Battery_mAh"].isna()) | (d["Battery_mAh"] >= int(intent["min_battery"]))]
-    if intent.get("min_ram") is not None and "RAM_GB" in d.columns:
-        d = d[(d["RAM_GB"].isna()) | (d["RAM_GB"] >= float(intent["min_ram"]))]
-    if intent.get("min_storage") is not None and "Storage_GB" in d.columns:
-        d = d[(d["Storage_GB"].isna()) | (d["Storage_GB"] >= float(intent["min_storage"]))]
-    if intent.get("min_camera") is not None and "MainCameraMP" in d.columns:
-        d = d[(d["MainCameraMP"].isna()) | (d["MainCameraMP"] >= float(intent["min_camera"]))]
-
-
 
 
 def rank_df(d: pd.DataFrame, intent: Dict[str, Any]) -> pd.DataFrame:
@@ -1484,50 +1360,61 @@ def _simple_explain(bullet: str, is_con: bool = False) -> str:
 
 def attach_explanations(intent: dict, row: pd.Series, pros: list[str], cons: list[str]) -> dict:
     """
-    Tries LLM to map each bullet -> short, plain explanation.
-    Falls back to small heuristics so UI never breaks.
-    Returns: {"pros": {"bullet": "explain"}, "cons": {"bullet": "explain"}}
+    Map each bullet to a short plain-language explanation.
+    Tries local LLM for JSON; falls back to simple heuristics.
+    Returns: {"pros": {...}, "cons": {...}}
     """
+    def _simple(bullet: str, is_con: bool = False) -> str:
+        t = (bullet or "").lower()
+        if "battery" in t: return "Longer runtime between charges."
+        if "ram" in t: return "More apps stay open without slowdowns."
+        if "storage" in t and not is_con: return "Holds more photos, apps, and videos."
+        if "storage" in t and is_con:    return "May run out of space quickly."
+        if "display" in t or "screen" in t: return "Easier to read and watch videos."
+        if "compact" in t: return "Smaller size is easier to hold and pocket."
+        if "wireless" in t and "charging" in t: return "Charge on a pad—no cable in the port."
+        if "ip68" in t or "water" in t or "dust" in t: return "Better protection from water and dust."
+        if "camera" in t or "mp" in t: return "Sharper photos with more detail."
+        if "heavy" in t: return "May feel weighty in hand or pocket."
+        if "expensive" in t or "price" in t: return "Costs more than similar phones."
+        return "Helpful in everyday use." if not is_con else "Potential drawback to consider."
+
     out = {"pros": {}, "cons": {}}
     if not pros and not cons:
         return out
 
-    # 1) Try LLM (strict JSON)
+    # Try local LLM (Ollama) strict JSON
     try:
-        prompt = (
-            "Return STRICT JSON with keys 'pros' and 'cons'. "
-            "'pros' is an object mapping each pro bullet to a short, simple explanation (<= 18 words). "
-            "'cons' is the same for cons. Avoid jargon.\n\n"
-            f"User intent: {json.dumps(intent, ensure_ascii=False)}\n"
-            "Phone: " + json.dumps({
-                "Brand": row.get("Brand"), "Model": row.get("Model"),
-                "OS": row.get("OS"), "ReleaseYear": int(row.get("ReleaseYear") or 0),
-                "DisplayInches": row.get("DisplayInches"), "Battery_mAh": row.get("Battery_mAh"),
-                "RAM_GB": row.get("RAM_GB"), "Storage_GB": row.get("Storage_GB"),
-                "MainCameraMP": row.get("MainCameraMP")
-            }, ensure_ascii=False) +
-            f"\nPros: {json.dumps(pros, ensure_ascii=False)}\n"
-            f"Cons: {json.dumps(cons, ensure_ascii=False)}\nJSON:"
-        )
-        txt = _ollama_generate(prompt, fmt_json=True, temperature=0.2)
-        if txt:
-            j = json.loads(txt)
+        if USE_OLLAMA:
+            prompt = (
+                "Return STRICT JSON with keys 'pros' and 'cons'. "
+                "'pros' maps each pro bullet to a short explanation (<= 18 words). "
+                "'cons' does the same for cons. No extra keys or text.\n\n"
+                f"Intent: {json.dumps(intent, ensure_ascii=False)}\n"
+                "Phone: " + json.dumps({
+                    "Brand": row.get("Brand"), "Model": row.get("Model"),
+                    "OS": row.get("OS"), "ReleaseYear": int(row.get("ReleaseYear") or 0),
+                    "DisplayInches": row.get("DisplayInches"), "Battery_mAh": row.get("Battery_mAh"),
+                    "RAM_GB": row.get("RAM_GB"), "Storage_GB": row.get("Storage_GB"),
+                    "MainCameraMP": row.get("MainCameraMP")
+                }, ensure_ascii=False) +
+                f"\nPros: {json.dumps(pros, ensure_ascii=False)}\n"
+                f"Cons: {json.dumps(cons, ensure_ascii=False)}\nJSON:"
+            )
+            j = _ollama_generate_json(prompt) or {}
             if isinstance(j.get("pros"), dict): out["pros"] = j["pros"]
             if isinstance(j.get("cons"), dict): out["cons"] = j["cons"]
     except Exception:
         pass
 
-    # 2) Heuristic fill for any missing lines (never leave blank)
-    if isinstance(pros, list):
-        for p in pros:
-            if p not in out["pros"]:
-                out["pros"][p] = _simple_explain(p, is_con=False)
-    if isinstance(cons, list):
-        for c in cons:
-            if c not in out["cons"]:
-                out["cons"][c] = _simple_explain(c, is_con=True)
+    # Heuristic fill for any missing bullets
+    for p in (pros or []):
+        out["pros"].setdefault(p, _simple(p, is_con=False))
+    for c in (cons or []):
+        out["cons"].setdefault(c, _simple(c, is_con=True))
 
     return out
+
 
 def llm_blurb(intent: dict, row: pd.Series) -> Optional[str]:
     prompt = (
