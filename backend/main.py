@@ -61,24 +61,259 @@ from fastapi import Request
 
 import csv, pathlib
 
-def _load_youtube_signals(slug: str) -> tuple[list, list]:
-    """
-    Reads data/processed/reviews.csv and returns (pros, cons) for this slug, or ([], []).
-    """
-    path = pathlib.Path("data/processed/reviews.csv")
-    if not path.exists():
-        return [], []
+# ------------------ YouTube live fetch + CSV cache ------------------
+# Requires: env var YOUTUBE_API_KEY (YouTube Data API v3 enabled)
+# Optional: python package `youtube-transcript-api` for captions (auto-handled if missing)
+
+import pathlib, csv, time as _time
+
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+
+_REVIEWS_CSV = pathlib.Path("data/processed/reviews.csv")
+_REVIEWS_CSV.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _yt_http(path: str, params: dict, timeout=12) -> dict:
+    """Tiny YouTube Data API GET helper."""
+    if not YOUTUBE_API_KEY:
+        return {}
     try:
-        with path.open(encoding="utf-8") as f:
-            r = csv.DictReader(f)
-            for row in r:
-                if (row.get("slug") or "") == slug:
-                    pros = (row.get("pros") or "").split("|") if row.get("pros") else []
-                    cons = (row.get("cons") or "").split("|") if row.get("cons") else []
-                    return pros, cons
+        params = dict(params or {})
+        params["key"] = YOUTUBE_API_KEY
+        r = requests.get(f"https://www.googleapis.com/youtube/v3/{path}", params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json() or {}
+    except Exception as e:
+        print("[yt] http error:", e)
+        return {}
+
+
+def _yt_search_reviews(brand: str, model: str, max_results: int = 6) -> list[dict]:
+    """Search YouTube for '<brand> <model> review' videos (recent & relevant)."""
+    q = f"{brand} {model} review"
+    data = _yt_http("search", {
+        "part": "snippet",
+        "q": q,
+        "maxResults": max(1, min(10, int(max_results))),
+        "type": "video",
+        "order": "relevance",
+        "safeSearch": "none",
+        "regionCode": "US",
+    })
+    out = []
+    for item in (data.get("items") or []):
+        vid = (((item.get("id") or {}).get("videoId")) or "").strip()
+        title = ((item.get("snippet") or {}).get("title") or "").strip()
+        if vid:
+            out.append({"videoId": vid, "title": title})
+    return out
+
+
+def _yt_fetch_transcript(video_id: str) -> str:
+    """
+    Best-effort transcript. Uses youtube-transcript-api if available; otherwise
+    falls back to the video title/description (via videos.list).
+    """
+    # 1) Try youtube-transcript-api (if installed)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+        try:
+            parts = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+            text = " ".join([p.get("text", "") for p in parts if p.get("text")])
+            if text.strip():
+                return text
+        except (TranscriptsDisabled, NoTranscriptFound):
+            pass
+        except Exception:
+            pass
+    except Exception:
+        # package not installed — fine, we’ll fall back
+        pass
+
+    # 2) Fallback: title + description (short but better than nothing)
+    try:
+        meta = _yt_http("videos", {"part": "snippet", "id": video_id}, timeout=10)
+        items = meta.get("items") or []
+        if items:
+            sn = (items[0] or {}).get("snippet") or {}
+            title = (sn.get("title") or "").strip()
+            desc = (sn.get("description") or "").strip()
+            return f"{title}\n{desc}"
     except Exception:
         pass
+    return ""
+
+
+def _extract_pros_cons_from_text(text: str, intent: dict) -> tuple[list[str], list[str]]:
+    """
+    Use your LLM for structured extraction (strict JSON).
+    Fallback: tiny keyword heuristics so we never fail.
+    """
+    text = (text or "").strip()
+    if not text:
+        return [], []
+
+    # --- LLM-first (Groq via chat_complete you already use) ---
+    if USE_LLM:
+        try:
+            prompt = (
+                "From the review text below, extract concise phone **pros** (3–5) and **cons** (2–4) "
+                "as STRICT JSON with keys 'pros' and 'cons'. Bullets should be short, human-friendly, "
+                "and deduplicated. No extra keys, no commentary.\n\n"
+                f"User intent (for relevance): {json.dumps(intent, ensure_ascii=False)}\n\n"
+                f"Review text:\n{text}\n\nJSON:"
+            )
+            # Reuse your existing LLM call
+            jtxt = chat_complete([{"role": "user", "content": prompt}], max_tokens=220, temperature=0.2)
+            if jtxt:
+                import re as _re, json as _json
+                j = None
+                try:
+                    j = _json.loads(jtxt)
+                except _json.JSONDecodeError:
+                    m = _re.search(r"\{.*\}", jtxt, _re.S)
+                    if m:
+                        j = _json.loads(m.group(0))
+                if isinstance(j, dict):
+                    pros = [str(x).strip() for x in (j.get("pros") or []) if str(x).strip()][:5]
+                    cons = [str(x).strip() for x in (j.get("cons") or []) if str(x).strip()][:4]
+                    return pros, cons
+        except Exception as e:
+            print("[yt] LLM extraction failed:", e)
+
+    # --- Heuristic fallback ---
+    pros, cons = [], []
+    t = text.lower()
+
+    def add(lst, s, limit):
+        s = s.strip()
+        if s and s not in lst and len(lst) < limit:
+            lst.append(s)
+
+    # crude signals
+    if "battery" in t or "endurance" in t:
+        add(pros, "Long battery life", 5)
+    if "camera" in t or "photo" in t:
+        add(pros, "High-quality camera", 5)
+    if "display" in t or "screen" in t:
+        add(pros, "Good display quality", 5)
+    if "performance" in t or "snapdragon" in t or "exynos" in t or "dimensity" in t:
+        add(pros, "Strong performance", 5)
+    if "storage" in t:
+        add(pros, "Ample storage", 5)
+    if "price" in t or "expensive" in t:
+        add(cons, "Price may be high for some", 4)
+    if "large" in t and "display" in t:
+        add(cons, "Large display may not suit everyone", 4)
+    if "heav" in t or "weight" in t:
+        add(cons, "Can feel heavy", 4)
+
+    return pros, cons
+
+
+def _live_youtube_signals(slug: str, brand: str, model: str) -> tuple[list[str], list[str]]:
+    """
+    Query YouTube for this model, pull a few transcripts, extract pros/cons,
+    dedupe + trim. Returns (pros, cons).
+    """
+    if not YOUTUBE_API_KEY:
+        return [], []
+
+    try:
+        vids = _yt_search_reviews(brand, model, max_results=5)
+        texts = []
+        for v in vids[:3]:  # at most 3 transcripts to keep latency reasonable
+            vid = v.get("videoId")
+            if not vid:
+                continue
+            txt = _yt_fetch_transcript(vid)
+            if txt:
+                texts.append(txt)
+            # tiny pause to be polite
+            _time.sleep(0.2)
+
+        joined = "\n\n".join(texts).strip()
+        if not joined:
+            # last attempt: use titles if nothing else
+            joined = "\n".join([x.get("title", "") for x in vids])
+
+        pros, cons = _extract_pros_cons_from_text(joined, intent=SESSIONS.get(slug, {}).get("intent", {}))
+        # dedupe & trim defensively
+        def _clean(lst, limit):
+            out, seen = [], set()
+            for x in (lst or []):
+                s = (x or "").strip()
+                if not s:
+                    continue
+                if s.lower() not in seen:
+                    seen.add(s.lower())
+                    out.append(s)
+                if len(out) >= limit:
+                    break
+            return out
+        return _clean(pros, 5), _clean(cons, 4)
+
+    except Exception as e:
+        print("[yt] live signals failed:", e)
+        return [], []
+
+
+def _append_review_row(slug: str, pros: list[str], cons: list[str]) -> None:
+    """Append/update one row in data/processed/reviews.csv safely."""
+    try:
+        rows = []
+        if _REVIEWS_CSV.exists():
+            with _REVIEWS_CSV.open(encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        # update existing or append
+        found = False
+        for r in rows:
+            if (r.get("slug") or "") == slug:
+                r["pros"] = "|".join(pros or [])
+                r["cons"] = "|".join(cons or [])
+                found = True
+                break
+        if not found:
+            rows.append({"slug": slug, "pros": "|".join(pros or []), "cons": "|".join(cons or [])})
+        # write back
+        with _REVIEWS_CSV.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["slug", "pros", "cons"])
+            w.writeheader()
+            for r in rows:
+                w.writerow({"slug": r.get("slug",""), "pros": r.get("pros",""), "cons": r.get("cons","")})
+    except Exception as e:
+        print("[yt] cache write failed:", e)
+
+
+def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None = None) -> tuple[list, list]:
+    """
+    1) Try local cache (data/processed/reviews.csv).
+    2) If missing and API key present, fetch live, cache, and return.
+    """
+    # 1) Cache lookup
+    if _REVIEWS_CSV.exists():
+        try:
+            with _REVIEWS_CSV.open(encoding="utf-8") as f:
+                r = csv.DictReader(f)
+                for row in r:
+                    if (row.get("slug") or "") == slug:
+                        pros = (row.get("pros") or "").split("|") if row.get("pros") else []
+                        cons = (row.get("cons") or "").split("|") if row.get("cons") else []
+                        if pros or cons:
+                            return pros, cons
+        except Exception as e:
+            print("[yt] cache read failed:", e)
+
+    # 2) Live fetch if possible
+    if YOUTUBE_API_KEY and brand and model:
+        pros, cons = _live_youtube_signals(slug, brand, model)
+        if pros or cons:
+            _append_review_row(slug, pros, cons)
+            return pros, cons
+
     return [], []
+# ------------------ end YouTube live block ------------------
+
 # =========================
 # Config
 # =========================
@@ -544,40 +779,33 @@ def candidates_multi(intent: dict) -> tuple[pd.DataFrame, dict, str]:
     return base.head(30), i0, "fallback newest"
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
-    """
-    Non-invasive builder with local brand/phone assets + remote image + pros/cons.
-    Keeps the same signature so existing call sites don't change.
-    """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
-    # Rank + dedupe like before
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
         print("[rank_df] failed:", e)
         ranked = d
     try:
-        ranked = unique_topn(ranked, 6)  # show a few more; UI will cut as needed
+        ranked = unique_topn(ranked, 6)
     except Exception as e:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
 
     for _, row in ranked.iterrows():
-        # --- Remote image (best-effort) ---
+        # Remote image
         image_url = None
         try:
             image_url = fetch_phone_image_url(str(row.get("Brand") or ""), str(row.get("Model") or ""))
         except Exception as e:
             print("[image] fetch_phone_image_url failed:", e)
 
-        # --- Local offline assets (public/phones, public/brands) ---
+        # Local assets + slug
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         slug = row.get("Slug")
-
-        # guard NaN slugs
         try:
             is_nan_slug = pd.isna(slug)
         except Exception:
@@ -589,11 +817,10 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
         )
-
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # --- Pros/Cons (LLM first; fallback heuristics) ---
+        # Pros/Cons from LLM (facts) first
         pros, cons = [], []
         try:
             if USE_LLM:
@@ -619,10 +846,8 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                     except _json.JSONDecodeError:
                         m = _re.search(r"\{.*\}", txt, _re.S)
                         if m:
-                            try:
-                                j = _json.loads(m.group(0))
-                            except Exception:
-                                j = None
+                            try: j = _json.loads(m.group(0))
+                            except Exception: j = None
                     if isinstance(j, dict):
                         pros = [str(x) for x in (j.get("pros") or [])][:5]
                         cons = [str(x) for x in (j.get("cons") or [])][:4]
@@ -635,9 +860,9 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
 
-        # --- Merge YouTube review signals BEFORE building item ---
+        # Merge YouTube review signals (live + cache)
         try:
-            yt_pros, yt_cons = _load_youtube_signals(slug)
+            yt_pros, yt_cons = _load_youtube_signals(slug, brand, model)
             def _merge(a, b, limit):
                 out, seen = [], set()
                 for x in (a or []) + (b or []):
@@ -654,13 +879,13 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[yt-merge] failed:", _e)
 
-        # --- Align bullets to the user's intent ---
+        # Align to intent
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # --- Build item safely (after merges) ---
+        # Build card
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -668,8 +893,8 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                 return None
 
         item = {
-            "Brand": row.get("Brand"),
-            "Model": row.get("Model"),
+            "Brand": brand,
+            "Model": model,
             "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
             "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
             "DisplayInches": fnum(row.get("DisplayInches"), float),
@@ -687,7 +912,6 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons,
         }
 
-        # Live offer (if present)
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -695,7 +919,6 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
-        # Tooltip explanations
         try:
             item["Explain"] = attach_explanations(intent, row, pros, cons)
         except Exception as _e:
@@ -709,13 +932,17 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
 @app.get("/yt/status")
 def yt_status():
-    import pathlib, csv as _csv
-    p = pathlib.Path("data/processed/reviews.csv")
+    import csv as _csv
     rows = 0
-    if p.exists():
-        with p.open(encoding="utf-8") as f:
+    if _REVIEWS_CSV.exists():
+        with _REVIEWS_CSV.open(encoding="utf-8") as f:
             rows = sum(1 for _ in _csv.DictReader(f))
-    return {"exists": p.exists(), "rows": rows}
+    return {
+        "exists": _REVIEWS_CSV.exists(),
+        "rows": rows,
+        "live_enabled": bool(YOUTUBE_API_KEY),
+    }
+
 
 @app.get("/config/status")
 def config_status():
@@ -1514,7 +1741,7 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
     picks: List[dict] = []
 
     for _, row in ranked.iterrows():
-        # --- Remote image (may be None) ---
+        # Remote image
         try:
             image_url = fetch_phone_image_url(
                 str(row.get("Brand") or ""),
@@ -1523,17 +1750,14 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         except Exception:
             image_url = None
 
-        # --- Local offline assets (public/phones, public/brands) ---
+        # Local assets + slug
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         slug = row.get("Slug")
-
-        # guard NaN slugs
         try:
             is_nan_slug = pd.isna(slug)
         except Exception:
             is_nan_slug = False
-
         if not slug or is_nan_slug or str(slug).lower() == "nan":
             slug = _slugify(f"{brand}-{model}")
 
@@ -1541,11 +1765,10 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
         )
+        brand_key = brand.lower().replace(" ", "_")
+        brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        brand_key = brand.lower().replace(" ", "_")  # "OnePlus" -> "oneplus"
-        brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")  # PNG logos you generated
-
-               # --- Pros/Cons (Groq/LLM first; fallback heuristics) ---
+        # Pros/Cons
         pros, cons = [], []
         try:
             if USE_LLM:
@@ -1585,9 +1808,9 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
             print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
 
-        # --- Merge YouTube review signals BEFORE building item ---
+        # Merge YouTube (live + cache)
         try:
-            yt_pros, yt_cons = _load_youtube_signals(slug)
+            yt_pros, yt_cons = _load_youtube_signals(slug, brand, model)
             def _merge(a, b, limit):
                 out, seen = [], set()
                 for x in (a or []) + (b or []):
@@ -1604,13 +1827,12 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         except Exception as _e:
             print("[yt-merge] failed:", _e)
 
-        # --- Align bullets to the user's intent ---
+        # Align + build
         try:
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # --- Build item safely (after merges) ---
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -1618,8 +1840,8 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
                 return None
 
         item = {
-            "Brand": row.get("Brand"),
-            "Model": row.get("Model"),
+            "Brand": brand,
+            "Model": model,
             "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
             "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
             "DisplayInches": fnum(row.get("DisplayInches"), float),
@@ -1637,7 +1859,6 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
             "Cons": cons,
         }
 
-        # >>> attach live offer, if available
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -1645,33 +1866,12 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
-        # >>> attach human-friendly explanations (tooltips)
         try:
             item["Explain"] = attach_explanations(intent, row, pros, cons)
         except Exception as _e:
             print("[explain] failed:", _e)
 
         picks.append(item)
-
-        # --- Merge YouTube review signals (if present) ---
-        try:
-            yt_pros, yt_cons = _load_youtube_signals(slug)
-            # extend, but avoid duplicates; then trim to a reasonable count
-            def _merge(a, b, limit):
-                out, seen = [], set()
-                for x in (a or []) + (b or []):
-                    s = (x or "").strip()
-                    if not s: 
-                        continue
-                    if s not in seen:
-                        seen.add(s); out.append(s)
-                    if len(out) >= limit:
-                        break
-                return out
-            pros = _merge(pros, yt_pros, 5)
-            cons = _merge(cons, yt_cons, 4)
-        except Exception as _e:
-            print("[yt-merge] failed:", _e)
 
     return picks
 
