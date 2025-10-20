@@ -12,6 +12,7 @@ import pandas as pd
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
+DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
 # --- Safe client IP helper (define BEFORE endpoints) ---
 def _client_ip(request: Request) -> str:
@@ -585,6 +586,8 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         ranked = ranked.head(6)
 
     for _, row in ranked.iterrows():
+        t0 = time.time()
+        diag = {"yt_rows": 0, "yt_used": False, "llm_used": False, "llm_ms": 0, "explain": False}
         # --- Remote image (best-effort) ---
         image_url = None
         try:
@@ -655,6 +658,8 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as e:
             print("[pros/cons] LLM failed:", e)
             pros, cons = [], []
+        diag["llm_used"] = True
+        diag["llm_ms"] = int((time.time() - t0) * 1000)
 
         # --- Merge YouTube review signals BEFORE building item ---
         try:
@@ -674,6 +679,8 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             cons = _merge(cons, yt_cons, 4)
         except Exception as _e:
             print("[yt-merge] failed:", _e)
+        diag["yt_rows"] = len((yt_pros or [])) + len((yt_cons or []))
+        diag["yt_used"] = diag["yt_rows"] > 0
 
         # --- Align bullets to the user's intent ---
         try:
@@ -747,6 +754,27 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
 
     return picks
+
+
+@app.get("/yt/status")
+def yt_status():
+    import pathlib, csv as _csv
+    p = pathlib.Path("data/processed/reviews.csv")
+    rows = 0
+    if p.exists():
+        with p.open(encoding="utf-8") as f:
+            rows = sum(1 for _ in _csv.DictReader(f))
+    return {"exists": p.exists(), "rows": rows}
+
+@app.get("/config/status")
+def config_status():
+    from config import USE_LLM, PHONES_CSV
+    return {
+        "use_llm": bool(USE_LLM),
+        "diag": bool(DIAG),
+        "csv_path": PHONES_CSV,
+        "df_rows": int(load_df().shape[0]) if load_df() is not None else 0
+    }
 
 def _slugify(s: str) -> str:
     s = (s or "").strip().lower()
