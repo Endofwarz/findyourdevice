@@ -93,17 +93,45 @@ def _yt_http(path: str, params: dict, timeout=12) -> tuple[dict, str | None]:
 
 def _yt_review_summary(slug: str, brand: str, model: str, intent: dict) -> str:
     """
-    Build one short sentence summarizing YT sentiment for blurb usage.
-    Uses cached/live signals; returns '' if nothing useful.
+    Build one crisp reviewer sentence from cached/live YT bullets.
+    Returns '' if nothing useful.
     """
     try:
         pros, cons = _load_youtube_signals(slug, brand, model)
     except Exception:
         pros, cons = [], []
+
     pros = [p for p in (pros or []) if p.strip()]
     cons = [c for c in (cons or []) if c.strip()]
+    if not pros and not cons:
+        return ""
 
-    # prefer top 2 pros + top 1 con for a clean sentence
+    # Prefer 1–2 pros + 1 con as a single sentence
+    raw = {
+        "pros": pros[:2],
+        "cons": cons[:1],
+        "brand": brand,
+        "model": model,
+        "intent": intent,
+    }
+
+    if USE_LLM:
+        try:
+            prompt = (
+                "Write ONE sentence with reviewer sentiment for shoppers. "
+                "Use a neutral, confident tone (no hype), ~30–40 words. "
+                "Blend the provided pros/cons. No lists, no colons.\n\n"
+                f"Data: {json.dumps(raw, ensure_ascii=False)}\n"
+                "Sentence:"
+            )
+            line = _ollama_text(prompt, temp=0.4) or ""
+            line = re.sub(r"\s+", " ", line).strip()
+            if line and 10 <= len(line.split()) <= 35:
+                return line
+        except Exception:
+            pass
+
+    # Deterministic fallback
     pros_part = ", ".join(pros[:2]) if pros else ""
     cons_part = cons[0] if cons else ""
     if pros_part and cons_part:
@@ -113,6 +141,7 @@ def _yt_review_summary(slug: str, brand: str, model: str, intent: dict) -> str:
     if cons_part:
         return f"Reviewers often note {cons_part}."
     return ""
+
 
 
 def _yt_search_reviews(brand: str, model: str, max_results: int = 6) -> list[dict]:
@@ -208,24 +237,25 @@ def _dedupe_bullets(lst: list[str], limit: int) -> list[str]:
 
 def _extract_pros_cons_from_text(text: str, intent: dict) -> tuple[list[str], list[str]]:
     """
-    Use your LLM for structured extraction (strict JSON).
-    Fallback: tiny keyword heuristics so we never fail.
+    Turn messy transcript text into concise, human-friendly pros/cons.
+    Returns (pros, cons). Uses LLM first; falls back to lightweight heuristics.
     """
     text = (text or "").strip()
     if not text:
         return [], []
 
-    # --- LLM-first (Groq via chat_complete you already use) ---
     if USE_LLM:
         try:
             prompt = (
-                "From the review text below, extract concise **pros** (3–6) and **cons** (2–5) "
-                "as STRICT JSON with keys 'pros' and 'cons'. Keep each item 5–12 words, "
-                "human-friendly, and deduplicated. No extra keys, no commentary.\n\n"
+                "From the review text below, extract concise **pros** (3–6) and **cons** (2–5). "
+                "Return STRICT JSON with keys 'pros' and 'cons'.\n"
+                "- Make each bullet specific (6–12 words), not generic.\n"
+                "- Deduplicate and avoid saying the same thing twice.\n"
+                "- Keep a plain, helpful tone.\n\n"
                 f"User intent (for relevance): {json.dumps(intent, ensure_ascii=False)}\n\n"
                 f"Review text:\n{text}\n\nJSON:"
             )
-            jtxt = chat_complete([{"role": "user", "content": prompt}], max_tokens=260, temperature=0.2)
+            jtxt = chat_complete([{"role": "user", "content": prompt}], max_tokens=280, temperature=0.2)
             if jtxt:
                 import re as _re, json as _json
                 j = None
@@ -242,34 +272,35 @@ def _extract_pros_cons_from_text(text: str, intent: dict) -> tuple[list[str], li
         except Exception as e:
             print("[yt] LLM extraction failed:", e)
 
-    # --- Heuristic fallback ---
-    pros, cons = [], []
+    # --- Heuristic fallback (kept a bit richer) ---
     t = text.lower()
+    pros, cons = [], []
 
     def add(lst, s, limit):
         s = s.strip()
-        if s and s not in lst and len(lst) < limit:
+        if s and s.lower() not in {x.lower() for x in lst} and len(lst) < limit:
             lst.append(s)
 
-    if "battery" in t or "endurance" in t:
-        add(pros, "Battery lasts comfortably through a full day", 6)
-    if "camera" in t or "photo" in t:
-        add(pros, "Cameras deliver sharp, pleasing photos", 6)
-    if "display" in t or "screen" in t:
+    if any(k in t for k in ["battery", "endurance", "screen-on time"]):
+        add(pros, "Battery comfortably lasts a full day", 6)
+    if any(k in t for k in ["display", "screen", "brightness"]):
         add(pros, "Bright, sharp display that’s easy to read", 6)
-    if "performance" in t or "snapdragon" in t or "exynos" in t or "dimensity" in t:
-        add(pros, "Smooth performance for apps and games", 6)
-    if "storage" in t:
-        add(pros, "Plenty of storage for photos and apps", 6)
+    if any(k in t for k in ["camera", "photo", "video", "hdr"]):
+        add(pros, "Cameras capture detailed, pleasing photos", 6)
+    if any(k in t for k in ["performance", "chip", "snapdragon", "exynos", "dimensity"]):
+        add(pros, "Smooth performance across apps and games", 6)
+    if "charging" in t:
+        add(pros, "Charge speeds feel quick in daily use", 6)
 
-    if "price" in t or "expensive" in t:
-        add(cons, "Price can feel high versus rivals", 5)
+    if any(k in t for k in ["price", "expensive"]):
+        add(cons, "Price feels high versus close rivals", 5)
+    if any(k in t for k in ["heavy", "weight"]):
+        add(cons, "A bit heavy in hand or pocket", 5)
     if "large" in t and "display" in t:
-        add(cons, "Size is big; not everyone likes large phones", 5)
-    if "heav" in t or "weight" in t:
-        add(cons, "On the heavy side in hand or pocket", 5)
+        add(cons, "Large size won’t suit small-phone fans", 5)
 
     return pros, cons
+
 
 
 
@@ -1019,6 +1050,54 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     return picks
 
 
+def _enrich_bullets_llm(intent: dict, brand: str, model: str,
+                        pros: list[str], cons: list[str]) -> tuple[list[str], list[str]]:
+    """
+    Rewrite bullets to be specific, 6–12 words, and non-duplicative.
+    If LLM is off/unavailable, returns inputs with light cleanup.
+    """
+    def _clean_list(lst: list[str], limit: int) -> list[str]:
+        out, seen = [], set()
+        for x in (lst or []):
+            s = re.sub(r"\s+", " ", (x or "").strip())
+            if not s:
+                continue
+            low = s.lower().rstrip(".")
+            if low not in seen:
+                seen.add(low)
+                out.append(s[0].upper() + s[1:])
+            if len(out) >= limit:
+                break
+        return out
+
+    if not (USE_LLM and (pros or cons)):
+        return _clean_list(pros, 6), _clean_list(cons, 5)
+
+    try:
+        prompt = (
+            "Rewrite these bullets so each is specific, natural, and 6–12 words. "
+            "Remove duplicates. Return STRICT JSON with keys 'pros' and 'cons'.\n\n"
+            f"Phone: {brand} {model}\n"
+            f"User intent: {json.dumps(intent, ensure_ascii=False)}\n"
+            f"Pros: {json.dumps(pros, ensure_ascii=False)}\n"
+            f"Cons: {json.dumps(cons, ensure_ascii=False)}\nJSON:"
+        )
+        jtxt = chat_complete([{"role": "user", "content": prompt}], max_tokens=220, temperature=0.2)
+        if jtxt:
+            import json as _json, re as _re
+            j = None
+            try:
+                j = _json.loads(jtxt)
+            except _json.JSONDecodeError:
+                m = _re.search(r"\{.*\}", jtxt, _re.S)
+                if m:
+                    j = _json.loads(m.group(0))
+            if isinstance(j, dict):
+                return _clean_list(j.get("pros") or [], 6), _clean_list(j.get("cons") or [], 5)
+    except Exception as e:
+        print("[bullets] enrich failed:", e)
+
+    return _clean_list(pros, 6), _clean_list(cons, 5)
 
 
 
@@ -1456,10 +1535,11 @@ def _ollama_text(prompt: str, temp=0.25) -> Optional[str]:
 
 def _compose_blurb(intent: dict, row: pd.Series) -> Optional[str]:
     """
-    3–4 short, friendly sentences that explain *why this phone fits*.
-    - Pulls a compact YT summary line.
-    - Mentions only things the user likely cares about.
-    - Avoids random camera talk unless relevant.
+    3–4 sentences:
+    1) What it is and the broad fit.
+    2) Connect to user's stated priorities only (size/battery/camera when relevant).
+    3) Reviewer sentence from YouTube (if any).
+    4) Budget positioning if provided.
     """
     def f(x, cast=float):
         try:
@@ -1479,7 +1559,7 @@ def _compose_blurb(intent: dict, row: pd.Series) -> Optional[str]:
     ram    = f(row.get("RAM_GB"))
     stg    = f(row.get("Storage_GB"))
 
-    # intent bits
+    # intent
     budget = None
     try:
         budget = float(intent.get("budget")) if intent.get("budget") is not None else None
@@ -1490,7 +1570,7 @@ def _compose_blurb(intent: dict, row: pd.Series) -> Optional[str]:
     want_camera = bool(intent.get("camera_priority"))
     want_battery = bool(intent.get("min_battery"))
 
-    # YT summary (cached/live)
+    # YT line
     slug = row.get("Slug")
     try:
         is_nan_slug = pd.isna(slug)
@@ -1500,41 +1580,23 @@ def _compose_blurb(intent: dict, row: pd.Series) -> Optional[str]:
         slug = _slugify(f"{brand}-{model}")
     yt_line = _yt_review_summary(slug, brand, model, intent)
 
-    # Build sentences (LLM-first for polish, fallback deterministic)
-    wants = {
-        "os": intent.get("os"),
-        "prefer_small": want_small,
-        "prefer_large": want_large,
-        "min_battery": intent.get("min_battery"),
-        "camera_priority": want_camera,
-        "budget": budget,
-    }
-    facts = {
-        "brand": brand, "model": model, "os": osname, "year": year,
-        "display_inches": disp, "battery_mAh": batt, "main_camera_mp": cammp,
-        "ram_gb": ram, "storage_gb": stg, "price_usd": price,
-        "yt_summary": yt_line
-    }
-
-    # Decide if it's okay to mention camera even when not explicitly asked.
-    # Only allow if spec is clearly strong (>=48 MP) and recent, else skip.
+    # camera mention allowed when user asked OR spec is strong & recent
     allow_camera = want_camera or (cammp and cammp >= 48 and year >= 2022)
 
+    # Try LLM for polished copy first
     if USE_OLLAMA:
         try:
             prompt = (
-                "Write 3–4 short, friendly sentences (≤ 85 words) explaining *why this phone fits* "
-                "the user's preferences. Keep it plain English.\n"
-                "- Mention OS only if it matters to the user.\n"
-                "- Mention size match (compact/large) only if the user asked.\n"
-                "- Mention battery longevity only if they care or the battery is notably big (≥5000 mAh).\n"
-                "- Mention camera only if allowed_by_camera flag is true.\n"
-                "- Position price vs. budget if budget exists.\n"
-                "- If provided, include ONE sentence summarizing reviewer sentiment from yt_summary.\n"
-                "No emojis. No bullet points. No spec dump.\n\n"
-                f"allowed_by_camera: {bool(allow_camera)}\n"
-                f"User intent:\n{json.dumps(wants, ensure_ascii=False)}\n\n"
-                f"Phone facts:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
+                "Write 3–4 short sentences (≤ 90 words) that explain why this phone fits the user. "
+                "Be clear, friendly, and concrete. Do not list specs; describe benefits.\n"
+                "- Mention OS only if the user cares.\n"
+                "- Mention size only if user cares (compact/large) with the actual diagonal.\n"
+                "- Mention battery only if user cares OR battery ≥ 5000 mAh.\n"
+                f"- Mention camera only if allowed_by_camera={bool(allow_camera)}.\n"
+                "- If yt_summary is non-empty, include it as exactly ONE sentence.\n"
+                "- Finally, position price vs budget if budget is provided.\n\n"
+                f"User intent: {json.dumps(intent, ensure_ascii=False)}\n"
+                f"Facts: {json.dumps({'brand':brand,'model':model,'os':osname,'year':year,'display_inches':disp,'battery_mAh':batt,'main_camera_mp':cammp,'ram_gb':ram,'storage_gb':stg,'price_usd':price,'budget':budget,'yt_summary':yt_line}, ensure_ascii=False)}\n"
                 "Answer:"
             )
             txt = _ollama_text(prompt, temp=0.25) or ""
@@ -1544,49 +1606,45 @@ def _compose_blurb(intent: dict, row: pd.Series) -> Optional[str]:
         except Exception:
             pass
 
-    # Fallback deterministic copy
-    parts = []
-    # 1) What it is
-    a = f"{brand} {model}"
-    if osname and wants.get("os"):
-        a += f" on {osname}"
-    if year:
-        a += f" ({year})"
-    parts.append(f"{a} looks like a strong fit.")
+    # Fallback deterministic
+    lines = []
 
-    # 2) Size / battery / camera only if relevant
-    s2 = []
+    s1 = f"{brand} {model}"
+    if osname and intent.get("os"):
+        s1 += f" on {osname}"
+    if year:
+        s1 += f" ({year})"
+    s1 += " looks like a strong match for you."
+    lines.append(s1)
+
+    s2p = []
     if disp:
         if want_small and disp <= 6.2:
-            s2.append(f"{disp:.1f}” screen keeps it easy to handle")
+            s2p.append(f"a compact {disp:.1f}” screen that’s easier to handle")
         elif want_large and disp >= 6.7:
-            s2.append(f"large {disp:.1f}” display suits your preference")
-    if want_battery and batt:
-        s2.append(f"{batt:,} mAh battery should comfortably last a day")
+            s2p.append(f"a large {disp:.1f}” display that’s great for reading and video")
+    if (want_battery or (batt and batt >= 5000)) and batt:
+        s2p.append(f"{batt:,} mAh battery for reliable all-day use")
     if allow_camera and cammp:
-        s2.append("cameras are strong for everyday photos")
-    if s2:
-        parts.append("It lines up with what you asked — " + "; ".join(s2) + ".")
+        s2p.append("cameras that deliver crisp everyday photos")
+    if ram:
+        s2p.append(f"{int(ram) if float(ram).is_integer() else ram} GB RAM keeps things responsive")
+    if stg:
+        s2p.append(f"{int(stg) if float(stg).is_integer() else stg} GB storage leaves room for apps and photos")
+    if s2p:
+        lines.append("It lines up with your priorities — " + "; ".join(s2p[:3]) + ".")
 
-    # 3) Everyday feel
-    s3 = []
-    if ram: s3.append(f"{int(ram) if float(ram).is_integer() else ram} GB RAM keeps things responsive")
-    if stg: s3.append(f"{int(stg) if float(stg).is_integer() else stg} GB gives plenty of room")
-    if s3: parts.append("Day to day, you'll notice " + " and ".join(s3) + ".")
+    if yt_line:
+        lines.append(yt_line)
 
-    # 4) Budget
     if budget and price:
         delta = price - budget
         if delta <= 0:
-            parts.append(f"It also stays within your ${int(budget)} budget.")
+            lines.append(f"It also stays within your ${int(budget)} budget.")
         else:
-            parts.append(f"It’s about ${int(round(delta))} over your ${int(budget)} budget.")
+            lines.append(f"It’s about ${int(round(delta))} over your ${int(budget)} budget.")
 
-    # 5) Reviewer sentiment
-    if yt_line:
-        parts.append(yt_line)
-
-    return " ".join(parts)
+    return " ".join(lines)
 
 
 def llm_pros_cons(intent: dict, row: pd.Series) -> Tuple[List[str], List[str]]:
@@ -1867,18 +1925,29 @@ def _final_hard_gate(d: pd.DataFrame, intent: dict) -> pd.DataFrame:
             out = out[~((out["OS"].str.contains("ios", case=False, na=False)) | (out["Brand"].str.contains("apple", case=False, na=False)))]
     return out
 
-def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
-    picks: List[dict] = []
+def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
+    picks: list[dict] = []
+    if d is None or d.empty:
+        return picks
+
+    try:
+        ranked = rank_df(d, intent)
+    except Exception as e:
+        print("[rank_df] failed:", e)
+        ranked = d
+    try:
+        ranked = unique_topn(ranked, 6)
+    except Exception as e:
+        print("[unique_topn] failed:", e)
+        ranked = ranked.head(6)
 
     for _, row in ranked.iterrows():
         # Remote image
+        image_url = None
         try:
-            image_url = fetch_phone_image_url(
-                str(row.get("Brand") or ""),
-                str(row.get("Model") or "")
-            )
-        except Exception:
-            image_url = None
+            image_url = fetch_phone_image_url(str(row.get("Brand") or ""), str(row.get("Model") or ""))
+        except Exception as e:
+            print("[image] fetch_phone_image_url failed:", e)
 
         # Local assets + slug
         brand = (row.get("Brand") or "").strip()
@@ -1898,71 +1967,26 @@ def _build_picks(ranked: pd.DataFrame, intent: dict) -> List[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # Pros/Cons
+        # Start empty; we now *prefer* YT + LLM, not fake DB
         pros, cons = [], []
-        try:
-            if USE_LLM:
-                facts = {
-                    "Brand": brand, "Model": model,
-                    "OS": row.get("OS"),
-                    "ReleaseYear": int(row.get("ReleaseYear") or 0),
-                    "PriceUSD": row.get("PriceUSD"),
-                    "DisplayInches": row.get("DisplayInches"),
-                    "Battery_mAh": row.get("Battery_mAh"),
-                    "RAM_GB": row.get("RAM_GB"),
-                    "Storage_GB": row.get("Storage_GB"),
-                    "MainCameraMP": row.get("MainCameraMP"),
-                    "NotableFeatures": row.get("NotableFeatures"),
-                }
-                msgs = pros_cons_messages(intent, facts)
-                txt = chat_complete(msgs, max_tokens=220, temperature=0.2)
-                if txt:
-                    import json as _json, re as _re
-                    j = None
-                    try:
-                        j = _json.loads(txt)
-                    except _json.JSONDecodeError:
-                        m = _re.search(r"\{.*\}", txt, _re.S)
-                        if m:
-                            try: j = _json.loads(m.group(0))
-                            except Exception: j = None
-                    if isinstance(j, dict):
-                        pros = [str(x) for x in (j.get("pros") or [])][:5]
-                        cons = [str(x) for x in (j.get("cons") or [])][:4]
-            if not pros and not cons:
-                try:
-                    pros, cons = llm_pros_cons(intent, row) or ([], [])
-                except Exception:
-                    pros, cons = [], []
-        except Exception as e:
-            print("[pros/cons] LLM failed:", e)
-            pros, cons = [], []
 
-        # Merge YouTube (live + cache)
+        # ---------- YT merge + bullet polish ----------
         try:
             yt_pros, yt_cons = _load_youtube_signals(slug, brand, model)
-            def _merge(a, b, limit):
-                out, seen = [], set()
-                for x in (a or []) + (b or []):
-                    s = (x or "").strip()
-                    if not s:
-                        continue
-                    if s not in seen:
-                        seen.add(s); out.append(s)
-                    if len(out) >= limit:
-                        break
-                return out
-            pros = _merge(pros, yt_pros, 5)
-            cons = _merge(cons, yt_cons, 4)
+            pros, cons = _enrich_bullets_llm(intent, brand, model, yt_pros or [], yt_cons or [])
+            if (yt_pros or yt_cons):
+                print(f"[yt] used for {slug}: {len(yt_pros)} pros, {len(yt_cons)} cons")
         except Exception as _e:
             print("[yt-merge] failed:", _e)
+        # ----------------------------------------------
 
-        # Align + build
+        # Align bullets to intent (but keep at least a few)
         try:
-            pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
+            pros, cons = _filter_bullets_to_intent(pros, cons, intent, row, keep_min=4)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
+        # Build card
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
