@@ -859,16 +859,15 @@ def candidates_multi(intent: dict) -> tuple[pd.DataFrame, dict, str]:
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     """
-    Phase A: Pros/Cons come ONLY from live signals (YouTube+LLM), not from the CSV.
-    - Try YouTube transcripts/titles -> LLM extraction (cached to data/processed/reviews.csv)
-    - If nothing usable, fall back to LLM from specs (llm_pros_cons)
-    - Dedupe, align to intent, and keep the rest of the card building unchanged
+    Phase A (hardened):
+    - Pros/Cons ONLY from live signals (YouTube+LLM), not the CSV.
+    - Robust against helpers returning unexpected shapes.
     """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
-    # rank & keep variety
+    # rank & variety
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
@@ -880,8 +879,18 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
 
+    # tiny safe-unpack helper
+    def _first_two(seq):
+        try:
+            if isinstance(seq, (list, tuple)):
+                a = seq[0] if len(seq) > 0 else []
+                b = seq[1] if len(seq) > 1 else []
+                return (a or []), (b or [])
+        except Exception:
+            pass
+        return [], []
+
     for _, row in ranked.iterrows():
-        # -------- Basic identity & assets --------
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
 
@@ -893,14 +902,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         if not slug or is_nan_slug or str(slug).lower() == "nan":
             slug = _slugify(f"{brand}-{model}")
 
-        # Remote image (Wikipedia best-effort)
+        # Images
         try:
             image_url = fetch_phone_image_url(brand, model)
         except Exception as e:
             print("[image] fetch_phone_image_url failed:", e)
             image_url = None
-
-        # Local public assets
         phone_local = (
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
@@ -908,25 +915,23 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # -------- Pros/Cons: LIVE ONLY (YT+LLM) --------
-        pros, cons = [], []
-
+        # -------- Pros/Cons: LIVE ONLY (YT+LLM), with safe unpack --------
+        pros: list[str] = []
+        cons: list[str] = []
         try:
-            # 1) YouTube review signals (live fetch + CSV cache)
-            yt_pros, yt_cons = _load_youtube_signals(slug, brand, model)
-            pros, cons = yt_pros or [], yt_cons or []
+            yt_res = _load_youtube_signals(slug, brand, model)
+            yt_pros, yt_cons = _first_two(yt_res)
+            pros, cons = list(yt_pros or []), list(yt_cons or [])
 
-            # 2) If YT gave us nothing, fall back to LLM-from-specs (keeps Phase A robust)
             if not pros and not cons:
-                try:
-                    pros, cons = llm_pros_cons(intent, row) or ([], [])
-                except Exception:
-                    pros, cons = [], []
+                llm_res = llm_pros_cons(intent, row)
+                llm_pros, llm_cons = _first_two(llm_res)
+                pros, cons = list(llm_pros or []), list(llm_cons or [])
         except Exception as e:
             print("[pros/cons-live] failed:", e)
             pros, cons = [], []
 
-        # -------- Clean, dedupe, align to intent --------
+        # -------- Dedupe, align to intent --------
         try:
             def _dedupe_cap(lst, cap):
                 out, seen = [], set()
@@ -969,12 +974,10 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "ImageLocal": phone_local,
             "ImageURL": image_url,
             "BrandLogo": brand_logo,
-            # >>> Phase A change: only live bullets <<<
-            "Pros": pros,
-            "Cons": cons,
+            "Pros": pros or [],
+            "Cons": cons or [],
         }
 
-        # Live offer (unchanged)
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -982,15 +985,15 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
-        # Short explanations for bullets (uses local LLM when available)
         try:
-            item["Explain"] = attach_explanations(intent, row, pros, cons)
+            item["Explain"] = attach_explanations(intent, row, item["Pros"], item["Cons"])
         except Exception as _e:
             print("[explain] failed:", _e)
 
         picks.append(item)
 
     return picks
+
 
 
 
