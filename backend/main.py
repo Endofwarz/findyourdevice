@@ -148,16 +148,14 @@ def _yt_signals_pair(res) -> tuple[list[str], list[str]]:
     Accepts (pros, cons), [pros, cons, ...], dicts, or None.
     """
     try:
-        # tuple/list with at least 2 items
         if isinstance(res, (tuple, list)) and len(res) >= 2:
-            a, b = res[0], res[1]
-            return list(a or []), list(b or [])
-        # dict with keys
+            return list(res[0] or []), list(res[1] or [])
         if isinstance(res, dict):
             return list(res.get("pros") or []), list(res.get("cons") or [])
     except Exception:
         pass
     return [], []
+
 
 
 def _yt_search_reviews(brand: str, model: str, max_results: int = 6) -> list[dict]:
@@ -1995,64 +1993,34 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         # Start empty; we now *prefer* YT + LLM, not fake DB
         pros, cons = [], []
 
-        # ---------- YT merge + bullet polish ----------
-        try:
-            yt_pros, yt_cons = _load_youtube_signals(slug, brand, model)
-            pros, cons = _enrich_bullets_llm(intent, brand, model, yt_pros or [], yt_cons or [])
-            if (yt_pros or yt_cons):
-                print(f"[yt] used for {slug}: {len(yt_pros)} pros, {len(yt_cons)} cons")
-        except Exception as _e:
-            print("[yt-merge] failed:", _e)
-        # ----------------------------------------------
+# ---- YT merge (simple, safe, no extra helpers) ----
+try:
+    yt_pros, yt_cons = _yt_signals_pair(_load_youtube_signals(slug, brand, model))
 
-        # Align bullets to intent (but keep at least a few)
-        try:
-            pros, cons = _filter_bullets_to_intent(pros, cons, intent, row, keep_min=4)
-        except Exception as e:
-            print("[pros/cons-filter] failed:", e)
+    def _merge(a, b, limit):
+        out, seen = [], set()
+        for x in (a or []) + (b or []):
+            s = (x or "").strip()
+            if not s:
+                continue
+            key = s.lower()
+            if key not in seen:
+                seen.add(key)
+                out.append(s)
+            if len(out) >= limit:
+                break
+        return out
 
-        # Build card
-        def fnum(x, cast):
-            try:
-                return cast(x) if pd.notna(x) else None
-            except Exception:
-                return None
+    # Prefer your existing bullets, then fill with YT
+    pros = _merge(pros, yt_pros, 6)
+    cons = _merge(cons, yt_cons, 5)
 
-        item = {
-            "Brand": brand,
-            "Model": model,
-            "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
-            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
-            "DisplayInches": fnum(row.get("DisplayInches"), float),
-            "Battery_mAh": fnum(row.get("Battery_mAh"), int),
-            "RAM_GB": fnum(row.get("RAM_GB"), float),
-            "Storage_GB": fnum(row.get("Storage_GB"), float),
-            "MainCameraMP": fnum(row.get("MainCameraMP"), float),
-            "OS": row.get("OS"),
-            "Weight_g": fnum(row.get("Weight_g"), float),
-            "NotableFeatures": row.get("NotableFeatures"),
-            "ImageLocal": phone_local,
-            "ImageURL": image_url,
-            "BrandLogo": brand_logo,
-            "Pros": pros,
-            "Cons": cons,
-        }
+    if yt_pros or yt_cons:
+        print(f"[yt] used for {slug}: {len(yt_pros)} pros, {len(yt_cons)} cons")
+except Exception as _e:
+    print("[yt-merge] failed:", _e)
+# ---------------------------------------------------
 
-        try:
-            offer = best_offer_for_slug(slug)
-            if offer:
-                item["LiveOffer"] = offer
-        except Exception as _e:
-            print("[offers] attach failed:", _e)
-
-        try:
-            item["Explain"] = attach_explanations(intent, row, pros, cons)
-        except Exception as _e:
-            print("[explain] failed:", _e)
-
-        picks.append(item)
-
-    return picks
 
 def _answer_or_ask(intent: dict, skipped: set, user_text: str) -> tuple[Optional[str], Optional[list], int]:
     """
