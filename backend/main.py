@@ -142,6 +142,22 @@ def _yt_review_summary(slug: str, brand: str, model: str, intent: dict) -> str:
         return f"Reviewers often note {cons_part}."
     return ""
 
+def _yt_signals_pair(res) -> tuple[list[str], list[str]]:
+    """
+    Normalize any return shape into (pros, cons) lists.
+    Accepts (pros, cons), [pros, cons, ...], dicts, or None.
+    """
+    try:
+        # tuple/list with at least 2 items
+        if isinstance(res, (tuple, list)) and len(res) >= 2:
+            a, b = res[0], res[1]
+            return list(a or []), list(b or [])
+        # dict with keys
+        if isinstance(res, dict):
+            return list(res.get("pros") or []), list(res.get("cons") or [])
+    except Exception:
+        pass
+    return [], []
 
 
 def _yt_search_reviews(brand: str, model: str, max_results: int = 6) -> list[dict]:
@@ -345,74 +361,83 @@ def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: lis
         print("[yt] cache write failed:", e)
 
 
-def _live_youtube_signals(slug: str, brand: str, model: str, intent: dict) -> tuple[list[str], list[str], list[str]]:
+def _live_youtube_signals(slug: str, brand: str, model: str) -> tuple[list[str], list[str]]:
     """
     Query YouTube for this model, pull a few transcripts, extract pros/cons,
-    dedupe + trim. Returns (pros, cons, sources). Sources are video URLs.
+    dedupe + trim. Returns (pros, cons) ONLY.
     """
     if not YOUTUBE_API_KEY:
-        return [], [], []
+        return [], []
 
     try:
-        vids = _yt_search_reviews(brand, model, max_results=6)
-        if not vids:
-            return [], [], []
-
+        vids = _yt_search_reviews(brand, model, max_results=5)
         texts = []
-        sources = []
-        for v in vids[:3]:  # at most 3 transcripts to keep latency reasonable
+        for v in vids[:3]:
             vid = v.get("videoId")
             if not vid:
                 continue
             txt = _yt_fetch_transcript(vid)
             if txt:
                 texts.append(txt)
-                sources.append(f"https://www.youtube.com/watch?v={vid}")
-            _time.sleep(0.2)  # tiny pause
+            _time.sleep(0.2)
 
         joined = "\n\n".join(texts).strip()
         if not joined:
-            # last attempt: use titles if nothing else (still record sources)
-            joined = "\n".join([x.get("title", "") for x in vids[:3]])
-            sources = [f"https://www.youtube.com/watch?v={x['videoId']}" for x in vids[:3] if x.get("videoId")]
+            joined = "\n".join([x.get("title", "") for x in vids])
 
-        pros, cons = _extract_pros_cons_from_text(joined, intent=intent)
-        pros = _dedupe_bullets(pros, 5)
-        cons = _dedupe_bullets(cons, 4)
-        return pros, cons, sources
+        pros, cons = _extract_pros_cons_from_text(joined, intent=SESSIONS.get(slug, {}).get("intent", {}))
+
+        # dedupe & trim
+        def _clean(lst, limit):
+            out, seen = [], set()
+            for x in (lst or []):
+                s = (x or "").strip()
+                if not s:
+                    continue
+                key = s.lower()
+                if key not in seen:
+                    seen.add(key)
+                    out.append(s)
+                if len(out) >= limit:
+                    break
+            return out
+
+        return _clean(pros, 6), _clean(cons, 5)
 
     except Exception as e:
         print("[yt] live signals failed:", e)
-        return [], [], []
+        return [], []
 
 
-def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None = None) -> tuple[list, list, list]:
+def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None = None) -> tuple[list[str], list[str]]:
     """
-    1) Try local cache (data/processed/reviews.csv) if not stale (>30 days old).
-    2) If missing/stale and API key present, fetch live, cache, and return.
+    1) Try local cache (data/processed/reviews.csv).
+    2) If missing and API key present, fetch live, cache, and return.
+    Always returns (pros, cons).
     """
-    # 1) Cache lookup
+    # 1) Cache
     if _REVIEWS_CSV.exists():
         try:
             with _REVIEWS_CSV.open(encoding="utf-8") as f:
                 r = csv.DictReader(f)
                 for row in r:
                     if (row.get("slug") or "") == slug:
-                        ts = row.get("ts", "")
-                        fresh = False
-                        try:
-                            if ts:
-                                fresh = datetime.utcnow() - datetime.fromisoformat(ts) < timedelta(days=_YT_TTL_DAYS)
-                        except Exception:
-                            fresh = False
                         pros = (row.get("pros") or "").split("|") if row.get("pros") else []
                         cons = (row.get("cons") or "").split("|") if row.get("cons") else []
-                        sources = (row.get("sources") or "").split("|") if row.get("sources") else []
-                        if (pros or cons) and fresh:
-                            return pros, cons, sources
-                        break
+                        if pros or cons:
+                            return pros, cons
         except Exception as e:
             print("[yt] cache read failed:", e)
+
+    # 2) Live
+    if YOUTUBE_API_KEY and brand and model:
+        pros, cons = _live_youtube_signals(slug, brand, model)
+        if pros or cons:
+            _append_review_row(slug, pros, cons)
+            return pros, cons
+
+    return [], []
+
 
     # 2) Live fetch if possible
     if YOUTUBE_API_KEY and brand and model:
