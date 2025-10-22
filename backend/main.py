@@ -318,14 +318,14 @@ def _extract_pros_cons_from_text(text: str, intent: dict) -> tuple[list[str], li
 
 
 
-def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: list[str]) -> None:
+def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: list[str] | None = None) -> None:
     """Append/update one row in data/processed/reviews.csv safely."""
     try:
         rows = []
         if _REVIEWS_CSV.exists():
             with _REVIEWS_CSV.open(encoding="utf-8") as f:
                 rows = list(csv.DictReader(f))
-        # update existing or append
+
         found = False
         for r in rows:
             if (r.get("slug") or "") == slug:
@@ -335,6 +335,7 @@ def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: lis
                 r["ts"] = datetime.utcnow().isoformat()
                 found = True
                 break
+
         if not found:
             rows.append({
                 "slug": slug,
@@ -343,7 +344,7 @@ def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: lis
                 "sources": "|".join(sources or []),
                 "ts": datetime.utcnow().isoformat(),
             })
-        # write back
+
         with _REVIEWS_CSV.open("w", encoding="utf-8", newline="") as f:
             w = csv.DictWriter(f, fieldnames=["slug", "pros", "cons", "sources", "ts"])
             w.writeheader()
@@ -357,6 +358,7 @@ def _append_review_row(slug: str, pros: list[str], cons: list[str], sources: lis
                 })
     except Exception as e:
         print("[yt] cache write failed:", e)
+
 
 
 def _live_youtube_signals(slug: str, brand: str, model: str) -> tuple[list[str], list[str]]:
@@ -427,25 +429,16 @@ def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None
         except Exception as e:
             print("[yt] cache read failed:", e)
 
-    # 2) Live
+    # 2) Live fetch if possible
     if YOUTUBE_API_KEY and brand and model:
         pros, cons = _live_youtube_signals(slug, brand, model)
         if pros or cons:
-            _append_review_row(slug, pros, cons)
+            _append_review_row(slug, pros, cons)  # sources optional now
             return pros, cons
 
     return [], []
 
 
-    # 2) Live fetch if possible
-    if YOUTUBE_API_KEY and brand and model:
-        intent = SESSIONS.get(slug, {}).get("intent", {}) or SESSIONS.get(list(SESSIONS.keys())[-1], {}).get("intent", {}) if SESSIONS else {}
-        pros, cons, sources = _live_youtube_signals(slug, brand, model, intent=intent)
-        if pros or cons:
-            _append_review_row(slug, pros, cons, sources)
-            return pros, cons, sources
-
-    return [], [], []
 # ------------------ end YouTube live block ------------------
 
 # =========================
@@ -744,7 +737,7 @@ def _blurb_for_row(intent: dict, row: pd.Series) -> Optional[str]:
 
     # Try to enrich with YouTube highlights (cached or live)
     try:
-        yt_pros, _, _ = _load_youtube_signals(slug, brand, model)
+        yt_pros, _ = _load_youtube_signals(slug, brand, model)
         yt_pros = _dedupe_bullets(yt_pros, 3)
         if yt_pros:
             joined = ", ".join(yt_pros[:2]) if len(yt_pros) >= 2 else yt_pros[0]
@@ -1138,20 +1131,11 @@ def yt_status():
     }
 @app.get("/yt/debug")
 def yt_debug(slug: str, brand: str, model: str):
-    """
-    Force a live pull (ignores stale cache), write cache, and return what we got.
-    Handy to confirm end-to-end without running the whole flow.
-    """
-    intent = SESSIONS.get(slug, {}).get("intent", {}) or {}
-    pros, cons, sources = _live_youtube_signals(slug, brand, model, intent=intent)
+    pros, cons = _live_youtube_signals(slug, brand, model)
     if pros or cons:
-        _append_review_row(slug, pros, cons, sources)
-    return {
-        "ok": bool(pros or cons),
-        "pros": pros,
-        "cons": cons,
-        "sources": sources,
-    }
+        _append_review_row(slug, pros, cons)
+    return {"ok": bool(pros or cons), "pros": pros, "cons": cons}
+
 
 @app.get("/config/status")
 def config_status():
@@ -1964,17 +1948,20 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
 
-    for _, row in ranked.iterrows():
-        # Remote image
-        image_url = None
+    def _first_two(seq):
         try:
-            image_url = fetch_phone_image_url(str(row.get("Brand") or ""), str(row.get("Model") or ""))
-        except Exception as e:
-            print("[image] fetch_phone_image_url failed:", e)
+            if isinstance(seq, (list, tuple)):
+                a = seq[0] if len(seq) > 0 else []
+                b = seq[1] if len(seq) > 1 else []
+                return (a or []), (b or [])
+        except Exception:
+            pass
+        return [], []
 
-        # Local assets + slug
+    for _, row in ranked.iterrows():
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
+
         slug = row.get("Slug")
         try:
             is_nan_slug = pd.isna(slug)
@@ -1983,6 +1970,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         if not slug or is_nan_slug or str(slug).lower() == "nan":
             slug = _slugify(f"{brand}-{model}")
 
+        # images
+        try:
+            image_url = fetch_phone_image_url(brand, model)
+        except Exception as e:
+            print("[image] fetch_phone_image_url failed:", e)
+            image_url = None
         phone_local = (
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
@@ -1990,35 +1983,80 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # Start empty; we now *prefer* YT + LLM, not fake DB
-        pros, cons = [], []
+        # ---- Pros/Cons: YT-first, then LLM fallback ----
+        pros: list[str] = []
+        cons: list[str] = []
+        try:
+            yt_pros, yt_cons = _yt_signals_pair(_load_youtube_signals(slug, brand, model))
+            pros, cons = list(yt_pros or []), list(yt_cons or [])
 
-# ---- YT merge (simple, safe, no extra helpers) ----
-try:
-    yt_pros, yt_cons = _yt_signals_pair(_load_youtube_signals(slug, brand, model))
+            if not pros and not cons:
+                llm_res = llm_pros_cons(intent, row)
+                llm_pros, llm_cons = _first_two(llm_res)
+                pros, cons = list(llm_pros or []), list(llm_cons or [])
+        except Exception as e:
+            print("[pros/cons-live] failed:", e)
+            pros, cons = [], []
 
-    def _merge(a, b, limit):
-        out, seen = [], set()
-        for x in (a or []) + (b or []):
-            s = (x or "").strip()
-            if not s:
-                continue
-            key = s.lower()
-            if key not in seen:
-                seen.add(key)
-                out.append(s)
-            if len(out) >= limit:
-                break
-        return out
+        # dedupe + intent focus
+        try:
+            def _dedupe_cap(lst, cap):
+                out, seen = [], set()
+                for x in lst or []:
+                    s = (x or "").strip()
+                    k = s.lower()
+                    if s and k not in seen:
+                        seen.add(k); out.append(s)
+                    if len(out) >= cap: break
+                return out
+            pros = _dedupe_cap(pros, 5)
+            cons = _dedupe_cap(cons, 4)
+            pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
+        except Exception as e:
+            print("[pros/cons-filter] failed:", e)
 
-    # Prefer your existing bullets, then fill with YT
-    pros = _merge(pros, yt_pros, 6)
-    cons = _merge(cons, yt_cons, 5)
+        # compose card
+        def fnum(x, cast):
+            try:
+                return cast(x) if pd.notna(x) else None
+            except Exception:
+                return None
 
-    if yt_pros or yt_cons:
-        print(f"[yt] used for {slug}: {len(yt_pros)} pros, {len(yt_cons)} cons")
-except Exception as _e:
-    print("[yt-merge] failed:", _e)
+        item = {
+            "Brand": brand,
+            "Model": model,
+            "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
+            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
+            "DisplayInches": fnum(row.get("DisplayInches"), float),
+            "Battery_mAh": fnum(row.get("Battery_mAh"), int),
+            "RAM_GB": fnum(row.get("RAM_GB"), float),
+            "Storage_GB": fnum(row.get("Storage_GB"), float),
+            "MainCameraMP": fnum(row.get("MainCameraMP"), float),
+            "OS": row.get("OS"),
+            "Weight_g": fnum(row.get("Weight_g"), float),
+            "NotableFeatures": row.get("NotableFeatures"),
+            "ImageLocal": phone_local,
+            "ImageURL": image_url,
+            "BrandLogo": brand_logo,
+            "Pros": pros or [],
+            "Cons": cons or [],
+        }
+
+        try:
+            offer = best_offer_for_slug(slug)
+            if offer:
+                item["LiveOffer"] = offer
+        except Exception as _e:
+            print("[offers] attach failed:", _e)
+
+        try:
+            item["Explain"] = attach_explanations(intent, row, item["Pros"], item["Cons"])
+        except Exception as _e:
+            print("[explain] failed:", _e)
+
+        picks.append(item)
+
+    return picks
 # ---------------------------------------------------
 
 
