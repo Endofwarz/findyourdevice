@@ -64,6 +64,26 @@ from fastapi import Request
 
 import csv, pathlib
 
+GSMA_OUT = os.getenv("GSMA_OUT", "data/processed/phones_gsma.csv")
+
+# choose GSMA as default if present; fall back to your old CSV
+PHONES_CSV = os.getenv("PHONES_CSV", GSMA_OUT if os.path.exists(GSMA_OUT)
+                                       else "data/processed/phones_clean.csv")
+
+@app.on_event("startup")
+def _seed_gsma_if_missing():
+    try:
+        if os.getenv("IMPORT_ON_BOOT", "1") == "1" and not os.path.exists(GSMA_OUT):
+            from gsma_scraper import bootstrap_import
+            brands = os.getenv("GSMA_BRANDS", "Apple,Samsung,Google,OnePlus,Sony,Motorola,Nothing").strip()
+            min_year = int(os.getenv("GSMA_MIN_YEAR", "2023"))
+            print(f"[startup] building GSMA CSV for: {brands} (>= {min_year})")
+            bootstrap_import(GSMA_OUT, brands, min_year)
+            # If PHONES_CSV wasn't set explicitly, the next load_df() will pick it up
+    except Exception as e:
+        print("[startup] GSMA bootstrap failed:", e)
+
+
 # ------------------ YouTube live fetch + CSV cache ------------------
 # Requires: env var YOUTUBE_API_KEY (YouTube Data API v3 enabled)
 # Optional: python package `youtube-transcript-api` for captions (auto-handled if missing)

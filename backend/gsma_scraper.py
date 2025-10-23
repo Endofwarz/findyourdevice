@@ -4,6 +4,7 @@ import os, re, time
 from typing import List, Dict
 import httpx
 from bs4 import BeautifulSoup
+import pandas as pd
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -168,3 +169,40 @@ def fetch_brand_since(brand: str, min_year: int = 2023, max_items: int = 150) ->
         except Exception as e:
             print(f"[gsma] parse error {card.get('detail_url')}: {e}")
     return out
+
+EXPECTED_COLS = [
+    "ID","Brand","Model","Slug","ReleaseYear","PriceUSD","DisplayInches",
+    "Battery_mAh","RAM_GB","Storage_GB","MainCameraMP","OS","Weight_g",
+    "NotableFeatures","SourceFiles"
+]
+
+def _dedupe_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    if "Slug" in df.columns and df["Slug"].notna().any():
+        return df.drop_duplicates(subset=["Slug"])
+    return df.drop_duplicates(subset=["Brand","Model"])
+
+def build_gsma_df(brands: list[str], min_year: int = 2023) -> pd.DataFrame:
+    frames = []
+    for b in brands:
+        b = b.strip()
+        if not b:
+            continue
+        try:
+            part = fetch_brand_since(b, min_year=min_year)  # your scraper function
+            if isinstance(part, pd.DataFrame) and not part.empty:
+                frames.append(part)
+            time.sleep(0.5)  # be nice to GSMArena
+        except Exception as e:
+            print("[gsma] brand failed:", b, e)
+    if not frames:
+        return pd.DataFrame(columns=EXPECTED_COLS)
+    return _dedupe_df(pd.concat(frames, ignore_index=True))
+
+def bootstrap_import(out_path: str, brands_csv: str, min_year: int = 2023):
+    brands = [x.strip() for x in (brands_csv or "").split(",") if x.strip()]
+    df = build_gsma_df(brands, min_year=min_year)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    df.to_csv(out_path, index=False)
+    print(f"[gsma] wrote {out_path} rows={len(df)}")
