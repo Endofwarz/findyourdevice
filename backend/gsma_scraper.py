@@ -5,6 +5,33 @@ from typing import List, Dict
 import httpx
 from bs4 import BeautifulSoup
 import pandas as pd
+import requests
+
+
+# Prefer lxml if present, otherwise fall back to Python's built-in parser
+try:
+    import lxml  # noqa: F401
+    _BS_PARSER = "lxml"
+except Exception:
+    _BS_PARSER = "html.parser"
+
+_UA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+def _soup(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, _BS_PARSER)
+
+def _get(url: str, **kwargs) -> requests.Response:
+    # always send a browser-y UA; merge with any caller headers
+    headers = dict(_UA_HEADERS)
+    headers.update(kwargs.pop("headers", {}) or {})
+    r = requests.get(url, headers=headers, timeout=kwargs.pop("timeout", 15), **kwargs)
+    r.raise_for_status()
+    return r
+
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -37,7 +64,7 @@ def _brand_listing_url(brand: str) -> str:
     # Example brand pages: /apple-phones-48.php, /samsung-phones-6.php, etc.
     # We search the brand directory page to resolve the brand id.
     html = _get_html(f"{BASE}/makers.php3")
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(resp.text)
     for a in soup.select("table tr td a"):
         name = (a.get_text() or "").strip().lower()
         href = a.get("href") or ""
@@ -48,7 +75,7 @@ def _brand_listing_url(brand: str) -> str:
     raise ScrapeError(f"brand not found in makers list: {brand}")
 
 def _parse_phone_cards(html: str) -> List[Dict]:
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(resp.text)
     out = []
     for li in soup.select("div.makers ul li"):
         a = li.find("a")
@@ -65,7 +92,7 @@ def _parse_phone_cards(html: str) -> List[Dict]:
     return out
 
 def _parse_year_from_specs_page(html: str) -> int | None:
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(resp.text)
     # GSMArena shows "Released 2024, ..." or "Announced 2023, ..."
     text = soup.get_text(" ", strip=True)
     m = re.search(r"(Released|Announced)\s+(\d{4})", text, re.I)
@@ -77,7 +104,7 @@ def _parse_year_from_specs_page(html: str) -> int | None:
     return None
 
 def _parse_specs_from_specs_page(html: str) -> Dict:
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(resp.text)
     specs = {}
     # These selectors are robust enough for a first pass.
     def get_val(label: str):

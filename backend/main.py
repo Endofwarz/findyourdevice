@@ -65,6 +65,24 @@ from fastapi import Request
 import csv, pathlib
 
 GSMA_OUT = os.getenv("GSMA_OUT", "data/processed/phones_gsma.csv")
+GSMA_PATH = os.getenv("PHONES_CSV", "data/processed/phones_gsma.csv")
+LEGACY_PATH = "data/processed/phones_clean.csv"
+
+def _safe_csv_path():
+    p = GSMA_PATH
+    try:
+        if os.path.exists(p) and os.path.getsize(p) > 200:  # crude "non-empty" check
+            import pandas as _pd
+            df = _pd.read_csv(p, nrows=5)
+            if df.shape[1] >= 6:  # also check it looks like a CSV
+                return p
+    except Exception:
+        pass
+    # fallback
+    return LEGACY_PATH
+
+CSV_PATH = _safe_csv_path()
+
 
 # choose GSMA as default if present; fall back to your old CSV
 PHONES_CSV = os.getenv("PHONES_CSV", GSMA_OUT if os.path.exists(GSMA_OUT)
