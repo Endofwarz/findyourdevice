@@ -1,4 +1,5 @@
 from __future__ import annotations
+from gsma_scraper import fetch_brand_since
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
 import random
 if DEMO_SEED:
@@ -461,6 +462,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.post("/import/gsma/brand")
+def import_gsma_brand(brand: str, min_year: int = 2023):
+    """
+    Crawl GSMArena for {brand} phones since min_year, then upsert into phones CSV.
+    Env: GSMA_DELAY controls politeness delay (default 0.8s).
+    """
+    rows = fetch_brand_since(brand, min_year=min_year)
+    return {"ok": True, "brand": brand, "added_or_updated": len(rows)}
+
+@app.post("/import/gsma/batch")
+def import_gsma_batch(min_year: int = 2023):
+    brands = [
+        "Apple","Samsung","Google","OnePlus","Xiaomi","Sony",
+        "Motorola","Nothing","Asus","Oppo","Vivo","Realme","Honor"
+    ]
+    total = 0
+    for b in brands:
+        try:
+            got = fetch_brand_since(b, min_year=min_year)
+            total += len(got)
+        except Exception as e:
+            print("[gsma] batch brand failed:", b, e)
+    return {"ok": True, "brands": len(brands), "added_or_updated": total}
 
 @app.get("/")
 def root():
