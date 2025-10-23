@@ -7,3 +7,4 @@ pydantic
 python-dotenv
 requests
 youtube-transcript-api
+beautifulsoup4>=4.12.2
