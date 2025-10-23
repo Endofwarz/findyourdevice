@@ -485,7 +485,6 @@ def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None
 # =========================
 # Config
 # =========================
-CSV_PATH = os.getenv("PHONES_CSV", "data/processed/phones_clean.csv")
 
 USE_OLLAMA = os.getenv("USE_OLLAMA", "1") == "1"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")

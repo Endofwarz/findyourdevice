@@ -61,38 +61,34 @@ def _get_html(url: str) -> str:
         raise ScrapeError(f"fetch failed: {e}") from e
 
 def _brand_listing_url(brand: str) -> str:
-    # Example brand pages: /apple-phones-48.php, /samsung-phones-6.php, etc.
-    # We search the brand directory page to resolve the brand id.
+    # Find the brand link (e.g., /apple-phones-48.php) from makers list
     html = _get_html(f"{BASE}/makers.php3")
-    soup = BeautifulSoup(resp.text)
+    soup = _soup(html)
     for a in soup.select("table tr td a"):
         name = (a.get_text() or "").strip().lower()
-        href = a.get("href") or ""
-        if not href.endswith(".php"):
-            continue
-        if brand.strip().lower() in name:
+        href = (a.get("href") or "").strip()
+        if href.endswith(".php") and brand.strip().lower() in name:
             return f"{BASE}/{href}"
     raise ScrapeError(f"brand not found in makers list: {brand}")
 
 def _parse_phone_cards(html: str) -> List[Dict]:
-    soup = BeautifulSoup(resp.text)
-    out = []
+    soup = _soup(html)
+    out: List[Dict] = []
     for li in soup.select("div.makers ul li"):
         a = li.find("a")
-        if not a: 
+        if not a:
             continue
-        href = a.get("href") or ""
+        href = (a.get("href") or "").strip()
         title = (a.get_text(" ") or "").strip()
-        if not href or not title:
-            continue
-        out.append({
-            "detail_url": f"{BASE}/{href}",
-            "title": title,
-        })
+        if href and title:
+            out.append({
+                "detail_url": f"{BASE}/{href}",
+                "title": title,
+            })
     return out
 
 def _parse_year_from_specs_page(html: str) -> int | None:
-    soup = BeautifulSoup(resp.text)
+    soup = _soup(html)
     # GSMArena shows "Released 2024, ..." or "Announced 2023, ..."
     text = soup.get_text(" ", strip=True)
     m = re.search(r"(Released|Announced)\s+(\d{4})", text, re.I)
@@ -104,45 +100,51 @@ def _parse_year_from_specs_page(html: str) -> int | None:
     return None
 
 def _parse_specs_from_specs_page(html: str) -> Dict:
-    soup = BeautifulSoup(resp.text)
-    specs = {}
-    # These selectors are robust enough for a first pass.
+    soup = _soup(html)
+    specs: Dict = {}
+
     def get_val(label: str):
-        el = soup.find("td", text=re.compile(rf"^{re.escape(label)}$", re.I))
-        if el and el.find_next("td"):
-            return el.find_next("td").get_text(" ", strip=True)
+        # Look for a row where the first cell is the label
+        # Works for many GSMA pages; it’s ok if some models miss fields.
+        th = soup.find(["th","td"], string=re.compile(rf"^{re.escape(label)}$", re.I))
+        if th:
+            td = th.find_next("td")
+            if td:
+                return td.get_text(" ", strip=True)
         return None
 
+    # Display inches
     specs["DisplayInches"] = None
-    disp = get_val("Size")
+    disp = get_val("Size") or get_val("Display")
     if disp:
-        m = re.search(r"(\d+\.\d+|\d+)\s*inches", disp, re.I)
+        m = re.search(r"(\d+(?:\.\d+)?)\s*inches", disp, re.I)
         if m:
             specs["DisplayInches"] = float(m.group(1))
 
+    # Battery mAh
     specs["Battery_mAh"] = None
-    bat = get_val("Battery")
+    bat = get_val("Battery") or get_val("Type")
     if bat:
         m = re.search(r"(\d{3,5})\s*mAh", bat, re.I)
         if m:
             specs["Battery_mAh"] = int(m.group(1))
 
+    # RAM / Storage (take largest storage mentioned)
     specs["RAM_GB"] = None
+    specs["Storage_GB"] = None
     mem = get_val("Internal")
     if mem:
         m = re.search(r"(\d{1,2})\s*GB\s*RAM", mem, re.I)
         if m:
             specs["RAM_GB"] = float(m.group(1))
-
-    specs["Storage_GB"] = None
-    if mem:
-        # pick the largest storage figure listed
         nums = [int(x) for x in re.findall(r"(\d{2,4})\s*GB(?!\s*RAM)", mem, re.I)]
         if nums:
             specs["Storage_GB"] = float(max(nums))
 
+    # Main camera MP (first number is okay as a heuristic)
     specs["MainCameraMP"] = None
-    cam = get_val("Triple") or get_val("Dual") or get_val("Single") or get_val("Quad") or get_val("Main Camera")
+    cam = (get_val("Main Camera") or get_val("Triple") or get_val("Dual") or
+           get_val("Single") or get_val("Quad"))
     if cam:
         m = re.search(r"(\d{2,3})\s*MP", cam, re.I)
         if m:
@@ -150,6 +152,7 @@ def _parse_specs_from_specs_page(html: str) -> Dict:
 
     specs["OS"] = get_val("OS") or ""
     return specs
+
 
 def fetch_brand_since(brand: str, min_year: int = 2023, max_items: int = 150) -> list[dict]:
     """Return structured phone rows for a brand since min_year."""
@@ -217,9 +220,9 @@ def build_gsma_df(brands: list[str], min_year: int = 2023) -> pd.DataFrame:
         if not b:
             continue
         try:
-            part = fetch_brand_since(b, min_year=min_year)  # your scraper function
-            if isinstance(part, pd.DataFrame) and not part.empty:
-                frames.append(part)
+            rows = fetch_brand_since(b, min_year=min_year)  # list[dict]
+            if rows:
+                frames.append(pd.DataFrame(rows))
             time.sleep(0.5)  # be nice to GSMArena
         except Exception as e:
             print("[gsma] brand failed:", b, e)
