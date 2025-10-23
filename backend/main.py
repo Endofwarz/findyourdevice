@@ -1,5 +1,6 @@
 from __future__ import annotations
-from gsma_scraper import fetch_brand_since
+import traceback
+from gsma_scraper import fetch_brand_since, ScrapeError
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
 import random
 if DEMO_SEED:
@@ -8,10 +9,11 @@ if DEMO_SEED:
 
 import os, re, json, uuid, math
 from typing import Any, Dict, List, Optional, Tuple
-import pandas as pd
+import pandas as pd, pathlib, csv, os
 import requests           
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Request
+from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
@@ -463,14 +465,69 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/import/gsma/brand")
-def import_gsma_brand(brand: str, min_year: int = 2023):
-    """
-    Crawl GSMArena for {brand} phones since min_year, then upsert into phones CSV.
-    Env: GSMA_DELAY controls politeness delay (default 0.8s).
-    """
-    rows = fetch_brand_since(brand, min_year=min_year)
-    return {"ok": True, "brand": brand, "added_or_updated": len(rows)}
+# near other imports
+from fastapi import HTTPException, Query
+from gsma_scraper import fetch_brand_since, ScrapeError
+import pandas as pd, pathlib, csv, os
+
+@app.get("/import/gsma/ping")
+def gsma_ping():
+    return {"ok": True}
+
+@app.get("/import/gsma/brand")
+def import_gsma_brand(
+    brand: str = Query(..., description="Brand name, e.g., Apple"),
+    min_year: int = Query(2023, ge=2008, le=2100),
+):
+    # guard if you keep a flag
+    if not os.getenv("ALLOW_SCRAPERS", "0") == "1":
+        raise HTTPException(status_code=403, detail="Scraping disabled (set ALLOW_SCRAPERS=1).")
+
+    try:
+        rows = fetch_brand_since(brand=brand, min_year=min_year)
+    except ScrapeError as e:
+        # 502 so Swagger shows message, not bare 500
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"unexpected: {e.__class__.__name__}")
+
+    # write/append to a normalized CSV
+    out_path = pathlib.Path("data/processed/phones_gsma.csv")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return {"ok": True, "imported": 0}
+
+    # add Slug + PriceUSD placeholder so your existing code can load it
+    def _slugify(s):
+        import re
+        s = (s or "").strip().lower()
+        s = re.sub(r"[^a-z0-9]+", "-", s)
+        return s.strip("-")
+    df["Slug"] = (df["Brand"].astype(str) + "-" + df["Model"].astype(str)).map(_slugify)
+    # keep your existing price logic (fake until we have MSRP)
+    df["PriceUSD"] = None
+
+    if out_path.exists():
+        old = pd.read_csv(out_path)
+        all_ = pd.concat([old, df], ignore_index=True)
+        all_.drop_duplicates(subset=["Slug"], keep="last", inplace=True)
+        all_.to_csv(out_path, index=False)
+    else:
+        df.to_csv(out_path, index=False)
+
+    return {"ok": True, "imported": int(df.shape[0]), "file": str(out_path)}
+
+
+@app.get("/import/gsma/probe")
+def import_gsma_probe(brand: str):
+    try:
+        from gsma_scraper import find_brand_url
+        url = find_brand_url(brand)
+        return {"ok": True, "brand": brand, "brand_url": url}
+    except Exception as e:
+        import traceback
+        return {"ok": False, "error": str(e), "trace": traceback.format_exc(limit=4)}
 
 @app.post("/import/gsma/batch")
 def import_gsma_batch(min_year: int = 2023):
