@@ -1,55 +1,57 @@
-# backend/dxomark.py
+# backend/dxomark_live.py
 from __future__ import annotations
-import re, requests
+import os, re
+from typing import Optional
+import requests
 from bs4 import BeautifulSoup
-from typing import Tuple, Optional
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; findyourdevice/1.0)"}
-RANK_URL = "https://www.dxomark.com/smartphones/"
+BASE = "https://www.dxomark.com"
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; findyourdevice/0.1)"}
+
+def _html(url: str) -> str:
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    return r.text
 
 def _norm(s: str) -> str:
-    s = re.sub(r"\s+", " ", s or "").strip().lower()
-    s = s.replace("apple ", "").replace("samsung ", "").replace("google ", "")
-    s = s.replace("oneplus ", "").replace("xiaomi ", "").replace("sony ", "")
-    s = s.replace("motorola ", "").replace("nothing ", "")
-    return s
+    return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
-def fetch_dxomark_camera_rank(brand: str, model: str) -> Tuple[Optional[int], Optional[float]]:
-    """
-    Returns (rank, score) if the device appears on the DxOMARK smartphones
-    ranking page; otherwise (None, None).
-    """
+def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
+    # Pull the main smartphone ranking page
     try:
-        r = requests.get(RANK_URL, headers=HEADERS, timeout=15)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "lxml")
+        html = _html(f"{BASE}/smartphones/")
     except Exception as e:
-        print("[dxo] fetch fail:", e)
-        return None, None
+        print("[dxo] fetch page failed:", e)
+        return None
 
-    target = _norm(f"{brand} {model}")
-    rank = None
-    score = None
+    soup = BeautifulSoup(html, "lxml")
+    want = _norm(f"{brand} {model}")
 
-    # Page structure can change; be tolerant:
-    # Look for list/grid items that contain model name and a numeric score.
-    cards = soup.select("a, div")
-    best = None
-    for i, node in enumerate(cards, start=1):
-        text = re.sub(r"\s+", " ", node.get_text(" ", strip=True))
-        low = text.lower()
-        if not low: 
+    rank_found = None
+    # Each product card usually has data like rank and a title link
+    for card in soup.select("div.card-product, article.card-product"):
+        title_el = card.select_one("a, h3, h2")
+        if not title_el: 
             continue
-        if any(k in low for k in [brand.lower(), model.lower()]):
-            # find a score like 123 or 123.4 near it
-            m = re.search(r"(\d{2,3}(?:\.\d)?)", text)
-            sc = float(m.group(1)) if m else None
-            nm = _norm(text)
-            # choose closest name
-            if target in nm or model.lower() in nm:
-                best = (i, sc)
-                break
+        title = _norm(title_el.get_text(" ", strip=True))
+        if not title:
+            continue
 
-    if best:
-        rank, score = best[0], best[1]
-    return rank, score
+        # cheap fuzzy match
+        if all(tok in title for tok in _norm(brand).split()):
+            if any(tok in title for tok in _norm(model).split()):
+                # rank appears in badges or as numeric label
+                txt = card.get_text(" ", strip=True).lower()
+                # try common patterns like "#12", "rank 12", or "n° 12"
+                m = re.search(r"(?:#|\brank\b|\bn[°o]\b)\s*(\d{1,3})", txt, re.I)
+                if not m:
+                    # some cards show position near the left badge
+                    m = re.search(r"\b(\d{1,3})\b.*(?:camera|smartphone)", txt, re.I)
+                if m:
+                    try:
+                        rank_found = int(m.group(1))
+                        break
+                    except Exception:
+                        pass
+
+    return rank_found

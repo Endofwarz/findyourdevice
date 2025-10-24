@@ -1,102 +1,92 @@
 # backend/reddit_live.py
 from __future__ import annotations
-import os, time, requests, re
+import os, time, base64
 from typing import Tuple, List
+import requests
 
-_R_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID") or ""
-_R_SECRET    = os.getenv("REDDIT_SECRET") or ""
-_UA          = os.getenv("REDDIT_UA", "findyourdevice/1.0 (by u/yourusername)")
-_USE_REDDIT   = os.getenv("USE_REDDIT_LIVE", "0") == "1"
+OAUTH = "https://oauth.reddit.com"
+AUTH  = "https://www.reddit.com/api/v1/access_token"
 
-_TOKEN: dict | None = None  # {"access_token": "...", "exp": 1234567890}
+CLIENT_ID     = os.getenv("REDDIT_CLIENT_ID", "").strip()
+CLIENT_SECRET = os.getenv("REDDIT_SECRET", "").strip()
+USER_AGENT    = os.getenv("REDDIT_USER_AGENT", "findyourdevice/0.1 by unknown").strip()
 
-def _token() -> str | None:
-    """Fetch or reuse app-only bearer token."""
-    if not (_R_CLIENT_ID and _R_SECRET and _USE_REDDIT):
-        return None
-    global _TOKEN
+_token_cache = {"value": None, "exp": 0}
+
+def _get_app_token() -> str:
+    # cache token ~45 minutes
     now = time.time()
-    if _TOKEN and now < _TOKEN.get("exp", 0) - 30:
-        return _TOKEN["access_token"]
-    try:
-        r = requests.post(
-            "https://www.reddit.com/api/v1/access_token",
-            auth=( _R_CLIENT_ID, _R_SECRET ),
-            data={"grant_type": "client_credentials"},
-            headers={"User-Agent": _UA},
-            timeout=15,
-        )
-        r.raise_for_status()
-        data = r.json()
-        _TOKEN = {
-            "access_token": data["access_token"],
-            "exp": now + int(data.get("expires_in", 3600)),
-        }
-        return _TOKEN["access_token"]
-    except Exception as e:
-        print("[reddit] token fail:", e)
-        return None
+    if _token_cache["value"] and now < _token_cache["exp"] - 60:
+        return _token_cache["value"]
 
-_KEYWORDS = [
-    "review", "battery", "camera", "heating", "overheat", "lag", "bug", "issue",
-    "screen", "display", "signal", "update", "throttling"
-]
-
-def _clean(text: str) -> str:
-    text = re.sub(r"\s+", " ", text or "").strip()
-    return text[:160]
-
-def reddit_signals_for_phone(brand: str, model: str) -> Tuple[List[str], List[str]]:
-    """
-    Returns (pros, cons) bullets. Safe to call without creds (returns [], []).
-    """
-    tok = _token()
+    auth = requests.auth.HTTPBasicAuth(CLIENT_ID, CLIENT_SECRET)
+    headers = {"User-Agent": USER_AGENT}
+    data = {"grant_type": "client_credentials"}
+    r = requests.post(AUTH, auth=auth, data=data, headers=headers, timeout=15)
+    r.raise_for_status()
+    tok = r.json().get("access_token")
     if not tok:
-        return [], []
+        raise RuntimeError("No reddit access_token in response")
+    _token_cache["value"] = tok
+    _token_cache["exp"] = now + 3600
+    return tok
 
-    q_name = f"\"{brand} {model}\" " + " OR ".join(_KEYWORDS)
+def _search_links(q: str, limit: int = 4) -> List[dict]:
+    tok = _get_app_token()
+    headers = {"Authorization": f"bearer {tok}", "User-Agent": USER_AGENT}
     params = {
-        "q": q_name,
+        "q": q,
         "sort": "relevance",
         "t": "year",
         "type": "link",
-        "limit": "8",
-        "restrict_sr": "false",
+        "limit": str(limit),
         "include_over_18": "on",
+        "raw_json": "1",
+        "restrict_sr": "false",
     }
-    try:
-        r = requests.get(
-            "https://oauth.reddit.com/search",
-            headers={"Authorization": f"bearer {tok}", "User-Agent": _UA},
-            params=params,
-            timeout=15,
-        )
-        r.raise_for_status()
-        js = r.json()
-        items = js.get("data", {}).get("children", [])
-        titles = [_clean(it.get("data", {}).get("title", "")) for it in items]
-        titles = [t for t in titles if t]
+    url = f"{OAUTH}/search"
+    r = requests.get(url, headers=headers, params=params, timeout=20)
+    r.raise_for_status()
+    return (r.json() or {}).get("data", {}).get("children", [])
 
-        pros, cons = [], []
-        for t in titles:
-            lt = t.lower()
-            if any(k in lt for k in ["battery life", "great camera", "love", "no issues", "smooth", "fast", "signal is good"]):
-                pros.append(t)
-            if any(k in lt for k in ["overheat", "heating", "lags", "bug", "issue", "scratch", "weak signal", "poor battery"]):
-                cons.append(t)
-
-        # cap + dedupe
-        def _dedupe_cap(lst, cap):
-            out, seen = [], set()
-            for x in lst:
-                k = x.lower()
-                if k not in seen:
-                    seen.add(k)
-                    out.append(x)
-                if len(out) >= cap:
-                    break
-            return out
-        return _dedupe_cap(pros, 3), _dedupe_cap(cons, 3)
-    except Exception as e:
-        print("[reddit] failed:", e)
+def reddit_signals_for_phone(slug: str, brand: str, model: str) -> Tuple[List[str], List[str]]:
+    """
+    Returns (pros, cons) lists pulled from recent reddit titles.
+    Very light heuristics: look for +words / -words patterns in titles.
+    """
+    brand, model = (brand or "").strip(), (model or "").strip()
+    if not brand or not model:
         return [], []
+
+    q = f"\"{brand} {model}\" review OR battery OR camera OR heating OR heat OR lag OR bug"
+    try:
+        posts = _search_links(q, limit=6)
+    except Exception as e:
+        print("[reddit] search failed:", e)
+        return [], []
+
+    titles = [ (p.get("data") or {}).get("title") or "" for p in posts ]
+    # ultra-simple heuristics
+    good_kw = ("battery life", "great battery", "fast", "camera", "durable", "update", "stable", "no issues")
+    bad_kw  = ("overheating", "heating", "hot", "lag", "bug", "issue", "problem", "throttle", "drain")
+
+    pros, cons = [], []
+    for t in titles:
+        lo = t.lower()
+        if any(k in lo for k in good_kw):
+            pros.append(t)
+        if any(k in lo for k in bad_kw):
+            cons.append(t)
+
+    # cap + de-dupe
+    def uniq(lst, cap): 
+        out, seen = [], set()
+        for s in lst:
+            s = s.strip()
+            k = s.lower()
+            if s and k not in seen:
+                seen.add(k); out.append(s)
+            if len(out) >= cap: break
+        return out
+
+    return uniq(pros, 3), uniq(cons, 3)
