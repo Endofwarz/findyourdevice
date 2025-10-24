@@ -811,37 +811,90 @@ function ResultsView({ picks, blurb, onRestart }) {
 
   return (
     <div className="space-y-8">
-      {/* HERO (centered, dominant) */}
-      <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200">
-        <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-          <div className="mx-auto w-full">
-            <PhoneImage
-              localSrc={featured?.ImageLocal}
-              remoteSrc={featured?.ImageURL}
-              brandLogo={featured?.BrandLogo}
-              alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-            />
-          </div>
+{/* HERO (centered, dominant) */}
+<div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
+  {/* DXOMARK badge — bottom-right, only if first pick has a score */}
+  {featured?.DxOMarkCamera ? (
+    <div
+      className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+      style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+      title="DXOMARK Camera score"
+    >
+      DXOMARK • {featured.DxOMarkCamera}
+    </div>
+  ) : null}
 
+  <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+    <div className="mx-auto w-full">
+      <PhoneImage
+        localSrc={featured?.ImageLocal}
+        remoteSrc={featured?.ImageURL}
+        brandLogo={featured?.BrandLogo}
+        alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
+      />
+    </div>
+
+    <div>
+      <div className="flex items-baseline justify-between">
+        <div className="text-2xl md:text-3xl font-semibold">
+          {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+        </div>
+        <div className="text-2xl">
+          {featured?.PriceUSD ? `$${Math.round(featured.PriceUSD)}` : "—"}
+        </div>
+      </div>
+
+      <div className="text-sm text-slate-500 mt-1">
+        {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+      </div>
+      <div className="text-sm text-slate-500">
+        {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+        {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+        {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+        {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
+      </div>
+
+      {/* Live price / link */}
+      {featured?.LiveOffer && (
+        <a
+          href={featured.LiveOffer.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1 inline-block text-sm underline hover:no-underline"
+          title="Open offer in a new tab"
+        >
+          From {featured.LiveOffer.currency}{" "}
+          {typeof featured.LiveOffer.price === "number"
+            ? featured.LiveOffer.price.toFixed(2)
+            : featured.LiveOffer.price}{" "}
+          at {retailerLabel(featured.LiveOffer.retailer)}
+          {featured.LiveOffer.in_stock ? "" : " (out of stock)"}
+        </a>
+      )}
+
+      {/* Blurb */}
+      {blurb ? (
+        <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+          {blurb}
+        </div>
+      ) : null}
+
+      {(featured?.Pros?.length || featured?.Cons?.length) ? (
+        <div className="grid md:grid-cols-2 gap-6 mt-5">
           <div>
-            <div className="flex items-baseline justify-between">
-              <div className="text-2xl md:text-3xl font-semibold">
-                {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
-              </div>
-              <div className="text-2xl">
-                {featured?.PriceUSD ? `$${Math.round(featured.PriceUSD)}` : "—"}
-              </div>
-            </div>
+            <div className="text-sm font-medium">Why it fits</div>
+            <BulletList items={featured?.Pros || []} pick={featured} />
+          </div>
+          <div>
+            <div className="text-sm font-medium">Trade-offs</div>
+            <BulletList items={featured?.Cons || []} pick={featured} isCon />
+          </div>
+        </div>
+      ) : null}
+    </div>
+  </div>
+</div>
 
-            <div className="text-sm text-slate-500 mt-1">
-              {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
-            </div>
-            <div className="text-sm text-slate-500">
-              {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-              {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-              {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-              {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-            </div>
 
 {/* Live price / link (if backend provided one) */}
 {featured?.LiveOffer && (

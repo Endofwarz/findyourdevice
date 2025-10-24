@@ -6,7 +6,6 @@ import random
 if DEMO_SEED:
     try: random.seed(int(DEMO_SEED))
     except: random.seed(42)
-
 import os, re, json, uuid, math
 USE_GSMA_LIVE = os.getenv("USE_GSMA_LIVE", "1") == "1"
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,6 +16,11 @@ from fastapi import FastAPI, Request
 from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
+
+from reddit_live import summarize_reddit
+USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"
+from dxomark_live import fetch_dxomark_camera_score
+USE_DXOMARK_LIVE = os.getenv("USE_DXOMARK_LIVE", "1") == "1"
 
 # --- Safe client IP helper (define BEFORE endpoints) ---
 def _client_ip(request: Request) -> str:
@@ -511,6 +515,45 @@ import pandas as pd, pathlib, csv, os
 @app.get("/import/gsma/ping")
 def gsma_ping():
     return {"ok": True}
+
+@app.get("/dxo/test")
+def dxo_test(brand: str, model: str):
+    if not USE_DXOMARK_LIVE:
+        return {"ok": False, "reason": "USE_DXOMARK_LIVE=0"}
+    s = fetch_dxomark_camera_score(brand, model)
+    return {"ok": True, "brand": brand, "model": model, "camera_score": s}
+
+# optional: nudge rank score when DXO exists
+def _dxo_bonus(brand: str, model: str) -> float:
+    if not USE_DXOMARK_LIVE:
+        return 0.0
+    try:
+        s = fetch_dxomark_camera_score(brand, model)
+        if s:
+            # scale 100–160 → 0–2.0 bonus
+            return max(0.0, (s - 100) / 30.0)
+    except Exception as e:
+        print("[dxo] failed:", e)
+    return 0.0
+
+# --- simple probe endpoint ---
+@app.get("/reddit/test")
+def reddit_test(brand: str, model: str):
+    if not USE_REDDIT_LIVE:
+        return {"ok": False, "reason": "USE_REDDIT_LIVE=0"}
+    pros, cons, sources = summarize_reddit(brand, model, max_posts=5)
+    return {"ok": True, "brand": brand, "model": model, "pros": pros, "cons": cons, "sources": sources}
+
+# --- helper to fetch reddit bullets in your pick-build path ---
+def _reddit_signals(slug: str, brand: str, model: str) -> tuple[list[str], list[str]]:
+    if not USE_REDDIT_LIVE:
+        return [], []
+    try:
+        pros, cons, _src = summarize_reddit(brand, model, max_posts=4)
+        return pros[:4], cons[:3]
+    except Exception as e:
+        print("[reddit] failed:", e)
+        return [], []
 
 @app.get("/import/gsma/brand")
 def import_gsma_brand(
@@ -1103,16 +1146,22 @@ def _merge_live_specs(row: pd.Series, brand: str, model: str) -> dict:
 
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
+    """
+    Builds up to 6 candidate cards, merging:
+      - live GSMA specs (no disk)
+      - YouTube + Reddit pros/cons (deduped, intent-focused)
+      - DXOMARK camera score for the FIRST pick only
+    """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
+    # --- rank & de-dup ---
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
         print("[rank_df] failed:", e)
         ranked = d
-
     try:
         ranked = unique_topn(ranked, 6)
     except Exception as e:
@@ -1129,14 +1178,17 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             pass
         return [], []
 
-    for _, row in ranked.iterrows():
+    # only fetch DXO for the first card (perf)
+    dxo_done = False
+
+    for idx, (_, row) in enumerate(ranked.iterrows()):
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
 
         # --- LIVE GSMA MERGE ---
         merged = _merge_live_specs(row, brand, model)
 
-        # slug + images
+        # --- slug + images ---
         slug = row.get("Slug")
         try:
             is_nan_slug = pd.isna(slug)
@@ -1158,7 +1210,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # -------- Pros/Cons: YT-first, then LLM fallback --------
+        # --- Pros/Cons: YouTube → LLM fallback ---
         pros: list[str] = []
         cons: list[str] = []
         try:
@@ -1172,7 +1224,15 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[pros/cons-live] failed:", e)
             pros, cons = [], []
 
-        # dedupe + intent focus
+        # --- Blend Reddit heuristics (live, lightweight) ---
+        try:
+            r_pros, r_cons = _reddit_signals(slug, brand, model)  # returns (pros, cons)
+            pros = (pros or []) + (r_pros or [])
+            cons = (cons or []) + (r_cons or [])
+        except Exception as e:
+            print("[reddit merge] failed:", e)
+
+        # --- dedupe + intent focus ---
         try:
             def _dedupe_cap(lst, cap):
                 out, seen = [], set()
@@ -1201,7 +1261,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Brand": brand,
             "Model": model,
             "ReleaseYear": fnum(merged.get("ReleaseYear"), int) or 0,
-            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,  # price stays as before
+            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,  # keep price logic as-is
             "DisplayInches": fnum(merged.get("DisplayInches"), float),
             "Battery_mAh": fnum(merged.get("Battery_mAh"), int),
             "RAM_GB": fnum(merged.get("RAM_GB"), float),
@@ -1217,6 +1277,18 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons or [],
         }
 
+        # --- DXOMARK: first pick only (adds item["DxOMarkCamera"]) ---
+        try:
+            if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
+                s = fetch_dxomark_camera_score(brand, model)  # may return None
+                if s:
+                    item["DxOMarkCamera"] = int(s)
+                dxo_done = True
+        except Exception as e:
+            print("[dxo] fetch failed:", e)
+            dxo_done = True  # avoid retrying for next items
+
+        # --- optional live offer ---
         try:
             offer = best_offer_for_slug(slug)
             if offer:
@@ -1224,6 +1296,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
+        # --- micro explanations per bullet ---
         try:
             item["Explain"] = attach_explanations(intent, row, item["Pros"], item["Cons"])
         except Exception as _e:
