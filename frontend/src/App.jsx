@@ -798,7 +798,7 @@ function Bullet({ text, tip }) {
   );
 }
 
-function ResultsView({ picks, blurb, onRestart }) {
+function ResultsView({ picks, blurb }) {
   if (!Array.isArray(picks) || picks.length === 0) {
     return (
       <div className="bg-white rounded-2xl shadow p-8 text-slate-500">
@@ -811,89 +811,138 @@ function ResultsView({ picks, blurb, onRestart }) {
 
   return (
     <div className="space-y-8">
-{/* HERO (centered, dominant) */}
-<div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
-  {/* DXOMARK badge — bottom-right, only if first pick has a score */}
-  {"DxOMarkCamera" in (featured || {}) && (
-    <div
-      className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-      style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-      title="DXOMARK Camera score"
-    >
-      DXOMARK • {featured.DxOMarkCamera ?? "—"}
-    </div>
-  )}
+      {/* HERO (centered, dominant) */}
+      <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
+        {/* DXOMARK badge — bottom-right, only if first pick has a score */}
+        {typeof featured?.DxOMarkCamera !== "undefined" && (
+          <div
+            className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+            style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+            title="DXOMARK Camera score"
+          >
+            DXOMARK • {featured.DxOMarkCamera ?? "—"}
+          </div>
+        )}
 
-  <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-    <div className="mx-auto w-full">
-      <PhoneImage
-        localSrc={featured?.ImageLocal}
-        remoteSrc={featured?.ImageURL}
-        brandLogo={featured?.BrandLogo}
-        alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-      />
-    </div>
+        <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+          <div className="mx-auto w-full">
+            <PhoneImage
+              localSrc={featured?.ImageLocal}
+              remoteSrc={featured?.ImageURL}
+              brandLogo={featured?.BrandLogo}
+              alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
+            />
+          </div>
 
-    <div>
-      <div className="flex items-baseline justify-between">
-        <div className="text-2xl md:text-3xl font-semibold">
-          {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+          <div>
+            <div className="flex items-baseline justify-between">
+              <div className="text-2xl md:text-3xl font-semibold">
+                {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+              </div>
+              <div className="text-2xl">
+                {featured?.PriceUSD ? `$${Math.round(featured.PriceUSD)}` : "—"}
+              </div>
+            </div>
+
+            <div className="text-sm text-slate-500 mt-1">
+              {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+            </div>
+            <div className="text-sm text-slate-500">
+              {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+              {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+              {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+              {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
+            </div>
+
+            {/* Live price / link */}
+            {featured?.LiveOffer && (
+              <a
+                href={featured.LiveOffer.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block text-sm underline hover:no-underline"
+                title="Open offer in a new tab"
+              >
+                From {featured.LiveOffer.currency}{" "}
+                {typeof featured.LiveOffer.price === "number"
+                  ? featured.LiveOffer.price.toFixed(2)
+                  : featured.LiveOffer.price}{" "}
+                at {retailerLabel(featured.LiveOffer.retailer)}
+                {featured.LiveOffer.in_stock ? "" : " (out of stock)"}
+              </a>
+            )}
+
+            {/* Blurb */}
+            {blurb ? (
+              <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                {blurb}
+              </div>
+            ) : null}
+
+            {(featured?.Pros?.length || featured?.Cons?.length) ? (
+              <div className="grid md:grid-cols-2 gap-6 mt-5">
+                <div>
+                  <div className="text-sm font-medium">Why it fits</div>
+                  <BulletList items={featured?.Pros || []} pick={featured} />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Trade-offs</div>
+                  <BulletList items={featured?.Cons || []} pick={featured} isCon />
+                </div>
+              </div>
+            ) : null}
+          </div>
         </div>
-        <div className="text-2xl">
-          {featured?.PriceUSD ? `$${Math.round(featured.PriceUSD)}` : "—"}
+      </div>
+
+      {/* Runner-ups (smaller, lighter) */}
+      {rest.length > 0 && (
+        <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
+          {rest.map((p, idx) => (
+            <div key={idx} className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200">
+              <PhoneImage
+                localSrc={p?.ImageLocal}
+                remoteSrc={p?.ImageURL}
+                brandLogo={p?.BrandLogo}
+                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
+              />
+              <div className="mt-3 flex items-baseline justify-between">
+                <div className="text-lg font-semibold">
+                  {(p?.Brand ?? "")} {(p?.Model ?? "")}
+                </div>
+                <div className="text-lg">
+                  {p?.PriceUSD ? `$${Math.round(p.PriceUSD)}` : "—"}
+                </div>
+              </div>
+              <div className="text-xs text-slate-500">
+                {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
+              </div>
+              <div className="text-xs text-slate-500">
+                {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
+                {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
+                {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
+              </div>
+
+              {(p?.Pros?.length || p?.Cons?.length) ? (
+                <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
+                  <div>
+                    <div className="text-sm font-medium">Pros</div>
+                    <BulletList items={p?.Pros || []} pick={p} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">Cons</div>
+                    <BulletList items={p?.Cons || []} pick={p} isCon />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ))}
         </div>
-      </div>
-
-      <div className="text-sm text-slate-500 mt-1">
-        {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
-      </div>
-      <div className="text-sm text-slate-500">
-        {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-        {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-        {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-        {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-      </div>
-
-      {/* Live price / link */}
-      {featured?.LiveOffer && (
-        <a
-          href={featured.LiveOffer.url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1 inline-block text-sm underline hover:no-underline"
-          title="Open offer in a new tab"
-        >
-          From {featured.LiveOffer.currency}{" "}
-          {typeof featured.LiveOffer.price === "number"
-            ? featured.LiveOffer.price.toFixed(2)
-            : featured.LiveOffer.price}{" "}
-          at {retailerLabel(featured.LiveOffer.retailer)}
-          {featured.LiveOffer.in_stock ? "" : " (out of stock)"}
-        </a>
       )}
-
-      {/* Blurb */}
-      {blurb ? (
-        <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
-          {blurb}
-        </div>
-      ) : null}
-
-      {(featured?.Pros?.length || featured?.Cons?.length) ? (
-        <div className="grid md:grid-cols-2 gap-6 mt-5">
-          <div>
-            <div className="text-sm font-medium">Why it fits</div>
-            <BulletList items={featured?.Pros || []} pick={featured} />
-          </div>
-          <div>
-            <div className="text-sm font-medium">Trade-offs</div>
-            <BulletList items={featured?.Cons || []} pick={featured} isCon />
-          </div>
-        </div>
-      ) : null}
     </div>
-  </div>
-</div>
+  );
+}
 
 
 {/* Live price / link (if backend provided one) */}

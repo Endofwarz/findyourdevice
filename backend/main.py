@@ -1247,6 +1247,34 @@ def _merge_live_specs(row: pd.Series, brand: str, model: str) -> dict:
             base[k] = v
 
     return base
+# --- Safe wrappers (place ABOVE _build_picks_from_df) -----------------
+
+def _reddit_signals_for_phone(slug: str, brand: str, model: str) -> tuple[list[str], list[str]]:
+    """
+    Returns (pros, cons). If reddit_signals_for_phone(brand, model, max_posts)
+    exists, call it; else return empty lists.
+    """
+    try:
+        fn = globals().get("reddit_signals_for_phone")
+        if callable(fn):
+            return fn(brand, model, max_posts=4)
+    except Exception as e:
+        print("[reddit] failed:", e)
+    return [], []
+
+
+def fetch_dxomark_camera_score(brand: str, model: str):
+    """
+    Best-effort DXOMARK score. If _dxomark_score(brand, model) exists, use it.
+    Returns int/str/None.
+    """
+    try:
+        fx = globals().get("_dxomark_score")
+        if callable(fx):
+            return fx(brand, model)
+    except Exception as e:
+        print("[dxomark] helper failed:", e)
+    return None
 
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
