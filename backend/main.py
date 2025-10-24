@@ -1,6 +1,6 @@
 from __future__ import annotations
 import traceback
-from gsma_scraper import fetch_brand_since, ScrapeError
+from gsma_scraper import fetch_specs_live, ScrapeError
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
 import random
 if DEMO_SEED:
@@ -519,6 +519,9 @@ def import_gsma_brand(
     # guard if you keep a flag
     if not os.getenv("ALLOW_SCRAPERS", "0") == "1":
         raise HTTPException(status_code=403, detail="Scraping disabled (set ALLOW_SCRAPERS=1).")
+    # lazy import so module load never fails
+    from gsma_scraper import fetch_brand_since
+    rows = fetch_brand_since(brand=brand, min_year=min_year)
 
     try:
         rows = fetch_brand_since(brand=brand, min_year=min_year)
@@ -896,8 +899,11 @@ def best_offer_for_slug(slug: str) -> dict | None:
                     }
     return best
 
+from gsma_scraper import fetch_specs_live  # <-- add at top of file
+
 def _direct_results_response(session_id: str, intent: dict, skipped: set | None = None) -> ChatMessageResp:
     """Build results strictly from current intent with budget hard-guard and a personalized blurb."""
+
     skipped = skipped or set()
 
     # 1) strict filter (your filter_df_by_intent already respects budget)
@@ -922,6 +928,22 @@ def _direct_results_response(session_id: str, intent: dict, skipped: set | None 
     picks = _build_picks_from_df(ranked.head(30), intent)
     picks = _strict_budget_picks(picks, intent.get("budget"))[:3]
 
+    # --- LIVE GSMA SPEC ENRICHMENT ---
+    for p in picks:
+        try:
+            # Only fetch if missing or placeholder values
+            if not p.get("DisplayInches") or p.get("DisplayInches") < 3:
+                brand = p.get("Brand") or p.get("brand")
+                model = p.get("Model") or p.get("model")
+                if brand and model:
+                    live_specs = fetch_specs_live(brand, model)
+                    if live_specs:
+                        print(f"[gsma-live] enriched {brand} {model} with {len(live_specs)} fields")
+                        p.update({k: v for k, v in live_specs.items() if v})
+        except Exception as e:
+            print(f"[gsma-live] failed for {p.get('Brand')} {p.get('Model')}: {e}")
+    # ----------------------------------
+
     # blurb
     ask = None
     try:
@@ -936,17 +958,14 @@ def _direct_results_response(session_id: str, intent: dict, skipped: set | None 
     # save
     SESSIONS[session_id] = {"intent": intent, "ask_key": None, "skipped": skipped}
 
-
-
     return ChatMessageResp(
-    session_id=session_id,
-    intent=intent,
-    ask=ask,
-    picks=[_clean_pick(p) for p in (picks or []) if isinstance(p, dict)],
-    count=count,
-    ui=ui_config(),
+        session_id=session_id,
+        intent=intent,
+        ask=ask,
+        picks=[_clean_pick(p) for p in (picks or []) if isinstance(p, dict)],
+        count=count,
+        ui=ui_config(),
     )
-
 
 
 def live_count(intent: Dict[str, Any]) -> int:
