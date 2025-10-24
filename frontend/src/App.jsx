@@ -896,56 +896,6 @@ function ResultsView({ picks, blurb }) {
   </div>
 </div>
 
-
-      {/* Runner-ups (smaller, lighter) */}
-      {rest.length > 0 && (
-        <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
-          {rest.map((p, idx) => (
-            <div key={idx} className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200">
-              <PhoneImage
-                localSrc={p?.ImageLocal}
-                remoteSrc={p?.ImageURL}
-                brandLogo={p?.BrandLogo}
-                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
-              />
-              <div className="mt-3 flex items-baseline justify-between">
-                <div className="text-lg font-semibold">
-                  {(p?.Brand ?? "")} {(p?.Model ?? "")}
-                </div>
-                <div className="text-lg">
-                  {p?.PriceUSD ? `$${Math.round(p.PriceUSD)}` : "—"}
-                </div>
-              </div>
-              <div className="text-xs text-slate-500">
-                {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
-              </div>
-              <div className="text-xs text-slate-500">
-                {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
-                {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
-                {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
-              </div>
-
-              {(p?.Pros?.length || p?.Cons?.length) ? (
-                <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
-                  <div>
-                    <div className="text-sm font-medium">Pros</div>
-                    <BulletList items={p?.Pros || []} pick={p} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">Cons</div>
-                    <BulletList items={p?.Cons || []} pick={p} isCon />
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
       {/* Runner-ups (smaller, lighter) */}
       {rest.length > 0 && (
         <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">

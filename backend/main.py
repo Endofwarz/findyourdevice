@@ -17,7 +17,7 @@ from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
-from reddit_live import reddit_signals_for_phone   # <- no underscore
+from reddit_live import reddit_search_pros_cons  # add at top
 from dxomark_live import fetch_dxomark_camera_rank
 USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"
 USE_DXOMARK_LIVE = os.getenv("USE_DXOMARK_LIVE", "1") == "1"
@@ -1358,7 +1358,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
         # --- Blend Reddit heuristics (live, lightweight) ---
         try:
-            r_pros, r_cons = _reddit_signals_for_phone(slug, brand, model)  # returns (pros, cons)
+            r_pros, r_cons = _reddit_search_pros_cons(slug, brand, model)  # returns (pros, cons)
             pros = (pros or []) + (r_pros or [])
             cons = (cons or []) + (r_cons or [])
         except Exception as e:
@@ -1410,7 +1410,18 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         }
 
         # --- DXOMARK: first pick only (adds item["DxOMarkCamera"]) ---
-# --- DXOMARK: first pick only
+        try:
+            if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
+                s = fetch_dxomark_camera_score(brand, model)  # may return None
+                if s is not None:
+                    try:
+                        item["DxOMarkCamera"] = int(s)
+                    except Exception:
+                        item["DxOMarkCamera"] = s
+                dxo_done = True
+        except Exception as e:
+            print("[dxo] fetch failed:", e)
+            dxo_done = True  # avoid retrying for next items
 
         # --- optional live offer ---
         try:
