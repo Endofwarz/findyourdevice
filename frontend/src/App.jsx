@@ -814,15 +814,15 @@ function ResultsView({ picks, blurb, onRestart }) {
 {/* HERO (centered, dominant) */}
 <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
   {/* DXOMARK badge — bottom-right, only if first pick has a score */}
-  {featured?.DxOMarkCamera ? (
+  {"DxOMarkCamera" in (featured || {}) && (
     <div
       className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
       style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
       title="DXOMARK Camera score"
     >
-      DXOMARK • {featured.DxOMarkCamera}
+      DXOMARK • {featured.DxOMarkCamera ?? "—"}
     </div>
-  ) : null}
+  )}
 
   <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
     <div className="mx-auto w-full">

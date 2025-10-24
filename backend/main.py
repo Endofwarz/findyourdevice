@@ -486,6 +486,39 @@ def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None
 
 
 # ------------------ end YouTube live block ------------------
+# --- DXOMARK (very conservative, best-effort) -------------------------------
+import re as _re
+
+def _dxo_score_from_html(html: str) -> int | None:
+    # DXOMARK layouts vary. Try a couple of common patterns; keep it simple.
+    # e.g., 'Camera score 154', or JSON "score":154 near "Camera".
+    m = _re.search(r"Camera\s*score[^0-9]{0,12}(\d{2,3})", html, _re.I)
+    if m: 
+        return int(m.group(1))
+    m = _re.search(r'"Camera"[^}]+?"score"\s*:\s*(\d{2,3})', html)
+    if m:
+        return int(m.group(1))
+    return None
+
+def _dxomark_score(brand: str, model: str) -> int | None:
+    """Very best-effort. We first try a search; then open the first dxomark smartphone page."""
+    try:
+        q = f'{brand} {model} site:dxomark.com smartphone camera score'
+        r = requests.get("https://duckduckgo.com/html", params={"q": q}, timeout=10,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        # find first dxomark smartphone link
+        m = _re.search(r'href="(https?://[^"]*dxomark\.com[^"]*smartphone[^"]*)"', r.text, _re.I)
+        if not m:
+            return None
+        url = m.group(1).replace("&amp;", "&")
+        h = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
+        h.raise_for_status()
+        return _dxo_score_from_html(h.text)
+    except Exception as e:
+        print("[dxomark] fetch failed:", e)
+        return None
+# --- end DXOMARK block -------------------------------------------------------
 
 # =========================
 # Config
@@ -699,6 +732,77 @@ def _price_fallback(row: pd.Series) -> Optional[float]:
 
 def safe_df() -> pd.DataFrame:
     return load_df().copy()
+
+# --- Reddit OAuth search (drop-in) -------------------------------------------
+import base64, time as _t
+
+_REDDIT_TOKEN = {"value": None, "exp": 0}
+
+def _reddit_token() -> str | None:
+    cid = os.getenv("REDDIT_CLIENT_ID", "")
+    sec = os.getenv("REDDIT_SECRET", "")
+    ua  = os.getenv("REDDIT_USER_AGENT", "phonefinder/1.0")
+    if not (cid and sec): 
+        return None
+    if _t.time() < _REDDIT_TOKEN["exp"] - 30 and _REDDIT_TOKEN["value"]:
+        return _REDDIT_TOKEN["value"]
+    try:
+        auth = base64.b64encode(f"{cid}:{sec}".encode()).decode()
+        r = requests.post(
+            "https://www.reddit.com/api/v1/access_token",
+            data={"grant_type":"client_credentials"},
+            headers={"Authorization": f"Basic {auth}", "User-Agent": ua},
+            timeout=12,
+        )
+        r.raise_for_status()
+        j = r.json()
+        token = j.get("access_token")
+        if token:
+            _REDDIT_TOKEN.update({"value": token, "exp": _t.time() + int(j.get("expires_in", 3600))})
+            return token
+    except Exception as e:
+        print("[reddit] token failed:", e)
+    return None
+
+def _reddit_search(q: str, limit: int = 4) -> list[dict]:
+    token = _reddit_token()
+    if not token:
+        raise RuntimeError("missing_reddit_oauth")
+    ua = os.getenv("REDDIT_USER_AGENT", "phonefinder/1.0")
+    r = requests.get(
+        "https://oauth.reddit.com/search",
+        params={"q": q, "sort": "relevance", "t": "year", "type": "link", "limit": max(1, min(10, limit))},
+        headers={"Authorization": f"Bearer {token}", "User-Agent": ua},
+        timeout=12,
+    )
+    r.raise_for_status()
+    j = r.json()
+    out = []
+    for ch in (j.get("data", {}).get("children") or []):
+        d = ch.get("data") or {}
+        out.append({
+            "title": d.get("title"),
+            "url": ("https://www.reddit.com" + d.get("permalink")) if d.get("permalink") else d.get("url"),
+            "selftext": d.get("selftext") or "",
+        })
+    return out
+
+def reddit_signals_for_phone(brand: str, model: str, max_posts: int = 4) -> tuple[list[str], list[str]]:
+    """Return (pros, cons) extracted from top reddit posts about this phone."""
+    try:
+        q = f"\"{brand} {model}\" review OR battery OR camera OR heating OR lag OR bug"
+        posts = _reddit_search(q, limit=max_posts)
+    except Exception as e:
+        print("[reddit] failed:", e); return [], []
+    # very light heuristics; your LLM extractor can be reused if you want
+    text = "\n\n".join(
+        [f"{p.get('title','')}\n{p.get('selftext','')}" for p in posts]
+    )[:15000]
+    # reuse your existing extractor to stay consistent
+    pros, cons = _extract_pros_cons_from_text(text, intent={})
+    return _dedupe_bullets(pros, 5), _dedupe_bullets(cons, 4)
+# --- end reddit block --------------------------------------------------------
+
 
 # =========================
 # Models
@@ -1226,7 +1330,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
         # --- Blend Reddit heuristics (live, lightweight) ---
         try:
-            r_pros, r_cons = _reddit_signals(slug, brand, model)  # returns (pros, cons)
+            r_pros, r_cons = _reddit_signals_for_phone(slug, brand, model)  # returns (pros, cons)
             pros = (pros or []) + (r_pros or [])
             cons = (cons or []) + (r_cons or [])
         except Exception as e:
@@ -1281,8 +1385,11 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         try:
             if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
                 s = fetch_dxomark_camera_score(brand, model)  # may return None
-                if s:
-                    item["DxOMarkCamera"] = int(s)
+                if s is not None:
+                    try:
+                        item["DxOMarkCamera"] = int(s)
+                    except Exception:
+                        item["DxOMarkCamera"] = s
                 dxo_done = True
         except Exception as e:
             print("[dxo] fetch failed:", e)
@@ -1305,6 +1412,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         picks.append(item)
 
     return picks
+
 
 
 def _enrich_bullets_llm(intent: dict, brand: str, model: str,
