@@ -17,9 +17,9 @@ from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 
-from reddit_live import summarize_reddit
+from reddit_live import reddit_signals_for_phone   # <- no underscore
+from dxomark_live import fetch_dxomark_camera_rank
 USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"
-from dxomark_live import fetch_dxomark_camera_score
 USE_DXOMARK_LIVE = os.getenv("USE_DXOMARK_LIVE", "1") == "1"
 
 # --- Safe client IP helper (define BEFORE endpoints) ---
@@ -1410,18 +1410,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         }
 
         # --- DXOMARK: first pick only (adds item["DxOMarkCamera"]) ---
-        try:
-            if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
-                s = fetch_dxomark_camera_score(brand, model)  # may return None
-                if s is not None:
-                    try:
-                        item["DxOMarkCamera"] = int(s)
-                    except Exception:
-                        item["DxOMarkCamera"] = s
-                dxo_done = True
-        except Exception as e:
-            print("[dxo] fetch failed:", e)
-            dxo_done = True  # avoid retrying for next items
+# --- DXOMARK: first pick only
 
         # --- optional live offer ---
         try:

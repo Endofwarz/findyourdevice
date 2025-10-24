@@ -1,89 +1,102 @@
 # backend/reddit_live.py
 from __future__ import annotations
-import re, time, requests
-from typing import List, Dict, Tuple
+import os, time, requests, re
+from typing import Tuple, List
 
-UA = {"User-Agent": "findyourdevice-bot/0.1 by yourname"}
-BASE = "https://www.reddit.com"
+_R_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID") or ""
+_R_SECRET    = os.getenv("REDDIT_SECRET") or ""
+_UA          = os.getenv("REDDIT_UA", "findyourdevice/1.0 (by u/yourusername)")
+_USE_REDDIT   = os.getenv("USE_REDDIT_LIVE", "0") == "1"
 
-def _get_json(path: str, params: dict) -> dict:
-    r = requests.get(f"{BASE}{path}", params=params, headers=UA, timeout=12)
-    r.raise_for_status()
-    return r.json()
+_TOKEN: dict | None = None  # {"access_token": "...", "exp": 1234567890}
 
-def search_posts(brand: str, model: str, limit: int = 8) -> List[Dict]:
-    """
-    Uses Reddit's public JSON search (no OAuth). Rate-limited but fine for light use.
-    """
-    q = f'"{brand} {model}" review OR battery OR camera OR heating OR lag OR bug'
-    j = _get_json("/search.json", {
-        "q": q, "sort": "relevance", "t": "year", "type": "link", "limit": max(3, min(25, limit))
-    })
-    out = []
-    for c in (j.get("data", {}).get("children") or []):
-        d = c.get("data") or {}
-        if d.get("subreddit_type") == "public" and not d.get("over_18"):
-            out.append({
-                "id": d.get("id"),
-                "title": d.get("title",""),
-                "url": d.get("url",""),
-                "permalink": d.get("permalink",""),
-                "score": d.get("score",0),
-            })
-    return out
+def _token() -> str | None:
+    """Fetch or reuse app-only bearer token."""
+    if not (_R_CLIENT_ID and _R_SECRET and _USE_REDDIT):
+        return None
+    global _TOKEN
+    now = time.time()
+    if _TOKEN and now < _TOKEN.get("exp", 0) - 30:
+        return _TOKEN["access_token"]
+    try:
+        r = requests.post(
+            "https://www.reddit.com/api/v1/access_token",
+            auth=( _R_CLIENT_ID, _R_SECRET ),
+            data={"grant_type": "client_credentials"},
+            headers={"User-Agent": _UA},
+            timeout=15,
+        )
+        r.raise_for_status()
+        data = r.json()
+        _TOKEN = {
+            "access_token": data["access_token"],
+            "exp": now + int(data.get("expires_in", 3600)),
+        }
+        return _TOKEN["access_token"]
+    except Exception as e:
+        print("[reddit] token fail:", e)
+        return None
 
-def fetch_comments(post_id: str, max_chars: int = 6000) -> str:
-    """
-    Pulls the top-level comments text; trims to a safe size.
-    """
-    j = _get_json(f"/comments/{post_id}.json", {"limit": 100, "depth": 1, "sort": "top"})
-    bodies = []
-    if isinstance(j, list) and len(j) > 1:
-        for child in (j[1].get("data",{}).get("children") or []):
-            body = ((child.get("data") or {}).get("body") or "").strip()
-            if body:
-                bodies.append(body)
-    text = "\n\n".join(bodies)
-    return text[:max_chars]
+_KEYWORDS = [
+    "review", "battery", "camera", "heating", "overheat", "lag", "bug", "issue",
+    "screen", "display", "signal", "update", "throttling"
+]
 
-def extract_pros_cons_plain(text: str) -> Tuple[List[str], List[str]]:
-    """
-    Lightweight heuristic extractor (works with your LLM path too).
-    """
-    t = text.lower()
-    pros, cons = [], []
-    def add(lst, s, cap):
-        if s and s.lower() not in {x.lower() for x in lst} and len(lst) < cap:
-            lst.append(s)
-    # very rough signals
-    if "battery" in t: add(pros, "Good battery life reported by owners", 6)
-    if "camera" in t: add(pros, "Owners like camera quality in daylight", 6)
-    if "display" in t or "screen" in t: add(pros, "Nice, bright display", 6)
-    if "software" in t or "updates" in t: add(pros, "Software/updates praised in threads", 6)
+def _clean(text: str) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text[:160]
 
-    if "overheat" in t or "heating" in t or "hot" in t: add(cons, "Some users report heating under load", 5)
-    if "bug" in t or "crash" in t: add(cons, "Occasional software bugs mentioned", 5)
-    if "battery drain" in t or "drain" in t: add(cons, "Battery drain reported by some", 5)
-    if "lag" in t or "stutter" in t: add(cons, "Lag/stutter for a few users", 5)
-    return pros, cons
+def reddit_signals_for_phone(brand: str, model: str) -> Tuple[List[str], List[str]]:
+    """
+    Returns (pros, cons) bullets. Safe to call without creds (returns [], []).
+    """
+    tok = _token()
+    if not tok:
+        return [], []
 
-def summarize_reddit(brand: str, model: str, max_posts: int = 5) -> Tuple[List[str], List[str], List[str]]:
-    """
-    Returns (pros, cons, sources). Non-LLM heuristics; your main app may refine with LLM.
-    """
-    posts = search_posts(brand, model, limit=max_posts)
-    if not posts:
-        return [], [], []
-    texts, sources = [], []
-    for p in posts[:max_posts]:
-        try:
-            texts.append(fetch_comments(p["id"]))
-            sources.append(BASE + p["permalink"])
-            time.sleep(0.25)
-        except Exception:
-            pass
-    joined = "\n\n".join([t for t in texts if t.strip()])
-    if not joined:
-        return [], [], sources
-    pros, cons = extract_pros_cons_plain(joined)
-    return pros, cons, sources
+    q_name = f"\"{brand} {model}\" " + " OR ".join(_KEYWORDS)
+    params = {
+        "q": q_name,
+        "sort": "relevance",
+        "t": "year",
+        "type": "link",
+        "limit": "8",
+        "restrict_sr": "false",
+        "include_over_18": "on",
+    }
+    try:
+        r = requests.get(
+            "https://oauth.reddit.com/search",
+            headers={"Authorization": f"bearer {tok}", "User-Agent": _UA},
+            params=params,
+            timeout=15,
+        )
+        r.raise_for_status()
+        js = r.json()
+        items = js.get("data", {}).get("children", [])
+        titles = [_clean(it.get("data", {}).get("title", "")) for it in items]
+        titles = [t for t in titles if t]
+
+        pros, cons = [], []
+        for t in titles:
+            lt = t.lower()
+            if any(k in lt for k in ["battery life", "great camera", "love", "no issues", "smooth", "fast", "signal is good"]):
+                pros.append(t)
+            if any(k in lt for k in ["overheat", "heating", "lags", "bug", "issue", "scratch", "weak signal", "poor battery"]):
+                cons.append(t)
+
+        # cap + dedupe
+        def _dedupe_cap(lst, cap):
+            out, seen = [], set()
+            for x in lst:
+                k = x.lower()
+                if k not in seen:
+                    seen.add(k)
+                    out.append(x)
+                if len(out) >= cap:
+                    break
+            return out
+        return _dedupe_cap(pros, 3), _dedupe_cap(cons, 3)
+    except Exception as e:
+        print("[reddit] failed:", e)
+        return [], []
