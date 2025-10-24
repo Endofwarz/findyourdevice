@@ -1283,7 +1283,14 @@ def _enrich_bullets_llm(intent: dict, brand: str, model: str,
 
     return _clean_list(pros, 6), _clean_list(cons, 5)
 
-
+@app.get("/gsma/test")
+def gsma_test(brand: str, model: str):
+    try:
+        from gsma_scraper import fetch_specs_live
+        specs = fetch_specs_live(brand, model)
+        return {"ok": bool(specs), "brand": brand, "model": model, "specs": specs}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 @app.get("/yt/status")
 def yt_status():

@@ -64,24 +64,46 @@ def _soup(html: str) -> BeautifulSoup:
 # ---------- Parsing helpers ----------
 
 def _brand_listing_url(brand: str) -> str:
-    """
-    Resolve brand -> /apple-phones-48.php via makers directory.
-    """
-    makers_html = _get_html(f"{BASE}/makers.php3")
-    soup = _soup(makers_html)
-    want = brand.strip().lower()
-
-    # links look like: <a href="apple-phones-48.php"><strong>Apple</strong> devices ...</a>
-    for a in soup.select("table tr td a"):
-        name = (a.get_text(" ") or "").strip().lower()
+    html = _get_html(f"{BASE}/makers.php3")
+    soup = _soup(html)
+    for a in soup.select("a[href*='-phones-']"):
+        name = (a.get_text() or "").strip().lower()
         href = (a.get("href") or "").strip()
-        if not href.endswith(".php"):
-            continue
-        if want in name:
+        if brand.lower() in name and href.endswith(".php"):
             return f"{BASE}/{href}"
+    raise ValueError(f"Brand not found: {brand}")
 
-    raise ScrapeError(f"brand not found in makers list: {brand}")
+def _search_phone_url(brand: str, model: str) -> str | None:
+    # GSMA search: res.php3?sSearch=...
+    q = f"{brand} {model}".strip()
+    html = _get_html(f"{BASE}/res.php3?sSearch={requests.utils.quote(q)}")
+    soup = _soup(html)
+    for a in soup.select("div.makers a[href*='.php']"):
+        href = (a.get("href") or "").strip()
+        title = (a.get_text(" ") or "").strip().lower()
+        if brand.lower() in title and model.lower() in title:
+            return f"{BASE}/{href}"
+    # accept first reasonable hit if exact not found
+    a = soup.select_one("div.makers a[href*='.php']")
+    if a:
+        return f"{BASE}/{a.get('href').strip()}"
+    return None
 
+def _find_phone_page(brand: str, model: str) -> str | None:
+    # 1) try brand listing
+    try:
+        brand_url = _brand_url(brand)
+        html = _get_html(brand_url)
+        soup = _soup(html)
+        for a in soup.select("div.makers a[href*='.php']"):
+            title = (a.get_text(" ") or "").strip().lower()
+            href = (a.get("href") or "").strip()
+            if model.lower() in title:
+                return f"{BASE}/{href}"
+    except Exception:
+        pass
+    # 2) fallback to site search
+    return _search_phone_url(brand, model)
 
 def _parse_phone_cards(listing_html: str) -> List[Dict[str, str]]:
     """
