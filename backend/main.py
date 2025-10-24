@@ -8,6 +8,7 @@ if DEMO_SEED:
     except: random.seed(42)
 
 import os, re, json, uuid, math
+USE_GSMA_LIVE = os.getenv("USE_GSMA_LIVE", "1") == "1"
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd, pathlib, csv, os
 import requests           
@@ -1066,29 +1067,58 @@ def candidates_multi(intent: dict) -> tuple[pd.DataFrame, dict, str]:
     base = df_all.sort_values(["ReleaseYear","PriceUSD"], ascending=[False, True], na_position="last")
     return base.head(30), i0, "fallback newest"
 
+def _merge_live_specs(row: pd.Series, brand: str, model: str) -> dict:
+    """
+    Merge GSMArena live specs into the row dict.
+    We prefer live values when they exist; otherwise keep CSV value.
+    """
+    base = {
+        "OS": row.get("OS"),
+        "ReleaseYear": row.get("ReleaseYear"),
+        "DisplayInches": row.get("DisplayInches"),
+        "Battery_mAh": row.get("Battery_mAh"),
+        "RAM_GB": row.get("RAM_GB"),
+        "Storage_GB": row.get("Storage_GB"),
+        "MainCameraMP": row.get("MainCameraMP"),
+    }
+
+    if not USE_GSMA_LIVE:
+        return base
+
+    live = {}
+    try:
+        live = fetch_specs_live(brand, model) or {}
+    except ScrapeError as e:
+        print(f"[gsma-live] {brand} {model}: {e}")
+    except Exception as e:
+        print(f"[gsma-live] unexpected for {brand} {model}: {e}")
+
+    # prefer live when present and non-empty
+    for k in list(base.keys()):
+        v = live.get(k)
+        if v not in (None, "", 0):
+            base[k] = v
+
+    return base
+
+
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
-    """
-    Phase A (hardened):
-    - Pros/Cons ONLY from live signals (YouTube+LLM), not the CSV.
-    - Robust against helpers returning unexpected shapes.
-    """
     picks: list[dict] = []
     if d is None or d.empty:
         return picks
 
-    # rank & variety
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
         print("[rank_df] failed:", e)
         ranked = d
+
     try:
         ranked = unique_topn(ranked, 6)
     except Exception as e:
         print("[unique_topn] failed:", e)
         ranked = ranked.head(6)
 
-    # tiny safe-unpack helper
     def _first_two(seq):
         try:
             if isinstance(seq, (list, tuple)):
@@ -1103,6 +1133,10 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
 
+        # --- LIVE GSMA MERGE ---
+        merged = _merge_live_specs(row, brand, model)
+
+        # slug + images
         slug = row.get("Slug")
         try:
             is_nan_slug = pd.isna(slug)
@@ -1111,12 +1145,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         if not slug or is_nan_slug or str(slug).lower() == "nan":
             slug = _slugify(f"{brand}-{model}")
 
-        # Images
         try:
             image_url = fetch_phone_image_url(brand, model)
         except Exception as e:
             print("[image] fetch_phone_image_url failed:", e)
             image_url = None
+
         phone_local = (
             _public_url_if_exists(f"/phones/{slug}.jpg")
             or _public_url_if_exists(f"/phones/{slug}.png")
@@ -1124,14 +1158,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # -------- Pros/Cons: LIVE ONLY (YT+LLM), with safe unpack --------
+        # -------- Pros/Cons: YT-first, then LLM fallback --------
         pros: list[str] = []
         cons: list[str] = []
         try:
-            yt_res = _load_youtube_signals(slug, brand, model)
-            yt_pros, yt_cons = _first_two(yt_res)
+            yt_pros, yt_cons = _yt_signals_pair(_load_youtube_signals(slug, brand, model))
             pros, cons = list(yt_pros or []), list(yt_cons or [])
-
             if not pros and not cons:
                 llm_res = llm_pros_cons(intent, row)
                 llm_pros, llm_cons = _first_two(llm_res)
@@ -1140,7 +1172,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[pros/cons-live] failed:", e)
             pros, cons = [], []
 
-        # -------- Dedupe, align to intent --------
+        # dedupe + intent focus
         try:
             def _dedupe_cap(lst, cap):
                 out, seen = [], set()
@@ -1148,19 +1180,17 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                     s = (x or "").strip()
                     k = s.lower()
                     if s and k not in seen:
-                        seen.add(k); out.append(s)
+                        seen.add(k)
+                        out.append(s)
                     if len(out) >= cap:
                         break
                 return out
-
             pros = _dedupe_cap(pros, 5)
             cons = _dedupe_cap(cons, 4)
-
             pros, cons = _filter_bullets_to_intent(pros, cons, intent, row)
         except Exception as e:
             print("[pros/cons-filter] failed:", e)
 
-        # -------- Compose card --------
         def fnum(x, cast):
             try:
                 return cast(x) if pd.notna(x) else None
@@ -1170,14 +1200,14 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         item = {
             "Brand": brand,
             "Model": model,
-            "ReleaseYear": fnum(row.get("ReleaseYear"), int) or 0,
-            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
-            "DisplayInches": fnum(row.get("DisplayInches"), float),
-            "Battery_mAh": fnum(row.get("Battery_mAh"), int),
-            "RAM_GB": fnum(row.get("RAM_GB"), float),
-            "Storage_GB": fnum(row.get("Storage_GB"), float),
-            "MainCameraMP": fnum(row.get("MainCameraMP"), float),
-            "OS": row.get("OS"),
+            "ReleaseYear": fnum(merged.get("ReleaseYear"), int) or 0,
+            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,  # price stays as before
+            "DisplayInches": fnum(merged.get("DisplayInches"), float),
+            "Battery_mAh": fnum(merged.get("Battery_mAh"), int),
+            "RAM_GB": fnum(merged.get("RAM_GB"), float),
+            "Storage_GB": fnum(merged.get("Storage_GB"), float),
+            "MainCameraMP": fnum(merged.get("MainCameraMP"), float),
+            "OS": merged.get("OS"),
             "Weight_g": fnum(row.get("Weight_g"), float),
             "NotableFeatures": row.get("NotableFeatures"),
             "ImageLocal": phone_local,
