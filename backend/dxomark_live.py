@@ -164,3 +164,35 @@ def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     # If all failed, None
     print(f"[dxo] {brand} {model}: rank not found")
     return None
+
+# --- diagnostics helper (used by /dxo/diag) ----------------------------------
+
+def diag_dxomark(brand: str, model: str):
+    """
+    Lightweight diagnostic: returns env flags + the computed rank (or None)
+    and a couple of notes to help debug scraping.
+    """
+    info = {
+        "brand": brand,
+        "model": model,
+        "env": {
+            "USE_DXOMARK_LIVE": os.getenv("USE_DXOMARK_LIVE", ""),
+        },
+        "notes": [],
+    }
+    try:
+        rnk = fetch_dxomark_camera_rank(brand, model)
+        info["result"] = rnk
+    except Exception as e:
+        info["error"] = str(e)
+
+    # a harmless probe text to verify we downloaded something that *looks* like the list page
+    try:
+        html = _get(RANK_LIST_URLS[0])
+        sample = " ".join(_soup(html).get_text(" ", strip=True).split()[:30])
+        info["text_sample"] = sample[:500]
+    except Exception:
+        pass
+
+    return info
+
