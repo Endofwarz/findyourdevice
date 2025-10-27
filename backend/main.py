@@ -1409,7 +1409,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         # --- DXOMARK rank: first pick only ---
         try:
             if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
-                rnk = fetch_dxomark_camera_rank(brand, model)  # int | None
+                rnk = cached_dxomark_rank(brand, model)  # int | None
                 if rnk is not None:
                     item["DxOMarkCameraRank"] = int(rnk)
                 dxo_done = True

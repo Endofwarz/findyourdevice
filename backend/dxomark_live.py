@@ -33,6 +33,36 @@ def _build_url(brand: str, model: str) -> str:
     m = model.strip().replace(" ", "-")
     return f"https://www.dxomark.com/smartphones/{b}/{m}"
 
+# --- extra helper at the top (below _build_url) ---
+def _variant_guesses(brand: str, model: str) -> list[tuple[str, str]]:
+    """
+    Generate tolerant brand/model pairs for DXOMARK lookups.
+    Handles 'Galaxy', 'iPhone', 'Pro Max' etc.
+    """
+    b, m = brand.strip(), model.strip()
+
+    variants = set()
+    variants.add((b, m))
+
+    # Brand synonyms
+    if b.lower() == "samsung" and not m.lower().startswith("galaxy"):
+        variants.add((b, f"Galaxy {m}"))
+    if b.lower() == "apple" and not m.lower().startswith("iphone"):
+        variants.add((b, f"iPhone {m}"))
+    if b.lower() == "google" and not m.lower().startswith("pixel"):
+        variants.add((b, f"Pixel {m}"))
+
+    # Handle "Pro Max" variants
+    m_norm = m.replace("ProMax", "Pro Max").replace("Pro Max", "ProMax")
+    variants.add((b, m_norm))
+
+    # Title-case model variants
+    m_tc = "-".join(p.capitalize() for p in m.replace("-", " ").split())
+    variants.add((b, m_tc))
+
+    return list(variants)
+
+
 # -------------------- extractors --------------------
 
 _ORD_RX = re.compile(
@@ -110,51 +140,55 @@ def _extract_rank_from_ld_json(html: str) -> Optional[int]:
 
 def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     """
-    Returns DXOMARK camera **rank** (int) for the given phone, or None.
+    Returns DXOMARK camera rank (int) for the given phone, or None.
+    Tries several brand/model variants + WP search fallback.
     """
     if os.getenv("USE_DXOMARK_LIVE", "1") != "1":
         return None
 
-    url = _build_url(brand, model)
-
-    # Try the provided casing first, then a couple of friendly variants.
-    candidates = [url]
-
-    # Title-case brand/model (helps when caller passes lowercase)
-    b_tc = " ".join(p.capitalize() for p in brand.split())
-    m_tc = "-".join(p.capitalize() for p in model.replace("-", " ").split())
-    candidates.append(_build_url(b_tc, m_tc))
-
-    # Keep brand case, title-case model only
-    candidates.append(_build_url(brand, m_tc))
-
-    for u in dict.fromkeys(candidates):  # de-dup while preserving order
+    tried_urls = set()
+    # 1️⃣ try smart variants first
+    for b_var, m_var in _variant_guesses(brand, model):
+        url = _build_url(b_var, m_var)
+        if url in tried_urls:
+            continue
+        tried_urls.add(url)
         try:
-            html = _http_get(u)
-        except Exception as e:
-            print(f"[dxo] fetch failed {u}: {e}")
+            html = _http_get(url)
+        except Exception:
             continue
 
-        # 1) Parse the visible '... in Global Ranking' line
-        rank = _extract_rank_from_global_text(html)
+        rank = _extract_rank_from_global_text(html) or \
+               _extract_rank_from_next_json(html) or \
+               _extract_rank_from_ld_json(html)
+
         if rank:
-            print(f"[dxo] {brand} {model}: rank #{rank} (Global text) {u}")
+            print(f"[dxo] {b_var} {m_var}: rank #{rank} via {_build_url(b_var, m_var)}")
             return rank
 
-        # 2) Fallback to Next.js data
-        rank = _extract_rank_from_next_json(html)
-        if rank:
-            print(f"[dxo] {brand} {model}: rank #{rank} (NEXT_DATA) {u}")
-            return rank
+    # 2️⃣ fallback: WordPress search API to find canonical link
+    try:
+        search_url = f"https://www.dxomark.com/wp-json/wp/v2/search?search={requests.utils.quote(brand + ' ' + model)}&per_page=5"
+        js = requests.get(search_url, headers=DXO_HEADERS, timeout=10).json()
+        for row in js or []:
+            href = row.get("url") or row.get("link")
+            if href and "/smartphones/" in href:
+                html = _http_get(href)
+                rank = _extract_rank_from_global_text(html) or _extract_rank_from_next_json(html)
+                if rank:
+                    print(f"[dxo] {brand} {model}: rank #{rank} via WP search {href}")
+                    return rank
+    except Exception as e:
+        print(f"[dxo] wp-search fallback failed: {e}")
 
-        # 3) Fallback to ld+json (rare)
-        rank = _extract_rank_from_ld_json(html)
-        if rank:
-            print(f"[dxo] {brand} {model}: rank #{rank} (ld+json) {u}")
-            return rank
-
-    print(f"[dxo] {brand} {model}: rank not found {url}")
+    print(f"[dxo] {brand} {model}: rank not found")
     return None
+
+from functools import lru_cache
+
+@lru_cache(maxsize=64)
+def cached_dxomark_rank(brand: str, model: str):
+    return fetch_dxomark_camera_rank(brand, model)
 
 def diag_dxomark(brand: str, model: str):
     """Simple diagnostics endpoint payload."""
