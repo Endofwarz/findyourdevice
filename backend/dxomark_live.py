@@ -1,7 +1,7 @@
 # backend/dxomark_live.py
 from __future__ import annotations
-import os, re
-from typing import Optional
+import os, re, html
+from typing import Optional, List
 import requests
 from bs4 import BeautifulSoup
 
@@ -15,143 +15,160 @@ DXO_HEADERS = {
     "Referer": "https://www.dxomark.com/",
 }
 
-RANK_LIST_URLS = [
-    "https://www.dxomark.com/smartphones/smartphone-ranking/",
-    "https://www.dxomark.com/smartphones/",
-]
+SEARCH_HEADERS = {
+    "User-Agent": DXO_HEADERS["User-Agent"],
+    "Accept-Language": DXO_HEADERS["Accept-Language"],
+    "Referer": "https://duckduckgo.com/",
+}
 
-def _http_get(url: str, timeout: float = 10.0) -> str:
-    r = requests.get(url, headers=DXO_HEADERS, timeout=timeout)
+def _http_get(url: str, timeout: float = 12.0, headers: dict | None = None) -> str:
+    r = requests.get(url, headers=headers or DXO_HEADERS, timeout=timeout, allow_redirects=True)
     r.raise_for_status()
     return r.text
 
-def _soup(html: str) -> BeautifulSoup:
+def _soup(html_text: str) -> BeautifulSoup:
     try:
-        return BeautifulSoup(html, "lxml")
+        return BeautifulSoup(html_text, "lxml")
     except Exception:
-        return BeautifulSoup(html, "html.parser")
+        return BeautifulSoup(html_text, "html.parser")
 
-def _normalize_title(s: str) -> str:
-    s = re.sub(r"\s+", " ", s or "").strip().lower()
+def _norm(s: str) -> str:
+    s = re.sub(r"\s+", " ", (s or "").strip()).lower()
     return s
 
-def _tokenize(s: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", _normalize_title(s)))
+def _slug(brand: str, model: str) -> str:
+    nm = _norm(f"{brand} {model}")
+    return re.sub(r"[^a-z0-9]+", "-", nm).strip("-")
 
-def _candidate_keys(brand: str, model: str) -> list[str]:
-    b = _normalize_title(brand)
-    m = _normalize_title(model)
-    keys = [f"{b} {m}", m]
-    if b == "apple" and not m.startswith("iphone"):
-        keys.append(f"iphone {m}")
-    if b == "samsung" and not m.startswith("galaxy"):
-        keys.append(f"galaxy {m}")
-    return [k.strip() for k in keys]
-
-def _best_row_match(rows, brand: str, model: str) -> Optional[int]:
-    cand_keys = _candidate_keys(brand, model)
-    cand_sets = [_tokenize(k) for k in cand_keys]
-    for rank, title in rows:
-        tset = _tokenize(title)
-        for cset in cand_sets:
-            if cset and cset.issubset(tset):
-                return rank
+def _extract_rank_from_text(text: str) -> Optional[int]:
+    # Try a few phrasings we’ve seen on DXOMARK device pages
+    patterns = [
+        r"(?:overall|global)\s+ranking\s*#\s*(\d{1,3})",
+        r"ranking[^#]{0,20}#\s*(\d{1,3})",
+        r"#\s*(\d{1,3})\s*(?:in\s*our\s*ranking|overall\s*ranking)"
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.I)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                pass
     return None
 
-def _parse_ranking_list(html: str) -> list[tuple[int, str]]:
-    s = _soup(html)
-    rows: list[tuple[int, str]] = []
+def _try_device_pages(brand: str, model: str) -> Optional[int]:
+    slug = _slug(brand, model)
+    candidates = [
+        f"https://www.dxomark.com/{slug}-camera/",
+        f"https://www.dxomark.com/smartphones/{slug}-camera-test/",
+        f"https://www.dxomark.com/smartphones/{slug}-camera-review/",
+        f"https://www.dxomark.com/smartphones/{slug}/",
+        f"https://www.dxomark.com/{slug}/",
+    ]
+    for url in candidates:
+        try:
+            html_text = _http_get(url, timeout=10)
+            text = " ".join(_soup(html_text).get_text(" ", strip=True).split())
+            rnk = _extract_rank_from_text(text)
+            if rnk:
+                print(f"[dxo] {brand} {model}: rank #{rnk} via device page {url}")
+                return rnk
+        except Exception:
+            continue
+    return None
 
-    # Layout A: explicit rank numbers
-    for tr in s.select("table tr"):
-        txt = " ".join(tr.get_text(" ", strip=True).split())
-        m = re.search(r"^\s*(\d+)\s*\.\s*(.+)$", txt)
-        if m:
-            rank = int(m.group(1))
-            title = m.group(2)
-            rows.append((rank, title))
-
-    # Layout B: list or card format
-    for li in s.select("li, div"):
-        rank_el = li.select_one(".rank, .c-ranking__position, .c-listing__position")
-        name_el = li.select_one(".device, .c-card__title, .c-listing__title, h3, h2")
-        if rank_el and name_el:
-            try:
-                rank = int(re.sub(r"[^\d]", "", rank_el.get_text()))
-            except Exception:
-                continue
-            title = " ".join(name_el.get_text(" ", strip=True).split())
-            if rank and title:
-                rows.append((rank, title))
-
-    # Deduplicate by rank
-    seen = set()
+def _ddg_search_dxomark(brand: str, model: str) -> List[str]:
+    """
+    Use DuckDuckGo's HTML endpoint (no JS, no API key) to find relevant DXOMARK URLs.
+    """
+    q = f'site:dxomark.com "{brand} {model}" camera'
+    url = "https://duckduckgo.com/html/?q=" + requests.utils.quote(q)
+    try:
+        html_text = _http_get(url, timeout=10, headers=SEARCH_HEADERS)
+    except Exception as e:
+        print("[dxo] ddg search failed:", e)
+        return []
+    s = _soup(html_text)
+    links = []
+    # DDG HTML puts results in .result__a, but we’ll be tolerant
+    for a in s.select("a.result__a, a[href]"):
+        href = a.get("href") or ""
+        # DDG sometimes wraps URLs like "/l/?kh=-1&uddg=<urlencoded>"
+        # unwrap if needed
+        if "/l/?" in href and "uddg=" in href:
+            m = re.search(r"uddg=([^&]+)", href)
+            if m:
+                href = requests.utils.unquote(m.group(1))
+        if "dxomark.com" in href:
+            # Prefer smartphone/camera pages
+            if any(x in href for x in ("/smartphones/", "-camera", "-camera-review", "-camera-test")):
+                links.append(href)
+    # Deduplicate & limit
     out = []
-    for r, t in rows:
-        if r not in seen:
-            out.append((r, t))
-            seen.add(r)
+    seen = set()
+    for u in links:
+        if u not in seen:
+            out.append(u)
+            seen.add(u)
+        if len(out) >= 6:
+            break
     return out
+
+def _try_search_then_parse(brand: str, model: str) -> Optional[int]:
+    for url in _ddg_search_dxomark(brand, model):
+        try:
+            html_text = _http_get(url, timeout=10)
+            text = " ".join(_soup(html_text).get_text(" ", strip=True).split())
+            rnk = _extract_rank_from_text(text)
+            if rnk:
+                print(f"[dxo] {brand} {model}: rank #{rnk} via search result {url}")
+                return rnk
+        except Exception:
+            continue
+    return None
 
 def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     """
-    Try to find the DXOMARK camera rank.
+    Returns 1-based DXOMARK camera rank for the given phone, or None.
+    Strategy:
+      1) Try device-page slugs directly (fast path)
+      2) If not found, search for the device page using DDG HTML and parse
     """
     if os.getenv("USE_DXOMARK_LIVE", "1") != "1":
         return None
 
-    # 1) Try list pages
-    for url in RANK_LIST_URLS:
-        try:
-            html = _http_get(url, timeout=12)
-            rows = _parse_ranking_list(html)
-            if rows:
-                rnk = _best_row_match(rows, brand, model)
-                if rnk:
-                    print(f"[dxo] {brand} {model}: rank #{rnk} via list page {url}")
-                    return rnk
-        except Exception as e:
-            print(f"[dxo] list fetch failed {url}: {e}")
+    # 1) Device pages
+    rnk = _try_device_pages(brand, model)
+    if rnk:
+        return rnk
 
-    # 2) Fallback: device page
-    slug = re.sub(r"\s+", "-", _normalize_title(f"{brand} {model}"))
-    for u in [
-        f"https://www.dxomark.com/{slug}-camera/",
-        f"https://www.dxomark.com/{slug}/",
-    ]:
-        try:
-            html = _http_get(u, timeout=10)
-            text = " ".join(_soup(html).get_text(" ", strip=True).split())
-            m = re.search(r"Overall ranking\s*#\s*(\d+)", text, re.I)
-            if m:
-                print(f"[dxo] {brand} {model}: rank #{m.group(1)} via device page")
-                return int(m.group(1))
-        except Exception:
-            continue
+    # 2) Search-based fallback
+    rnk = _try_search_then_parse(brand, model)
+    if rnk:
+        return rnk
 
     print(f"[dxo] {brand} {model}: rank not found")
     return None
 
-# --- diagnostics helper (used by /dxo/diag) ----------------------------------
+# --- diagnostics helper -------------------------------------------------------
 
 def diag_dxomark(brand: str, model: str):
     info = {
         "brand": brand,
         "model": model,
         "env": {"USE_DXOMARK_LIVE": os.getenv("USE_DXOMARK_LIVE", "")},
-        "notes": [],
     }
     try:
-        rnk = fetch_dxomark_camera_rank(brand, model)
-        info["result"] = rnk
+        info["result"] = fetch_dxomark_camera_rank(brand, model)
     except Exception as e:
         info["error"] = str(e)
 
+    # Include a small snippet from a search page to prove connectivity
     try:
-        html = _http_get(RANK_LIST_URLS[0], timeout=8)
-        sample = " ".join(_soup(html).get_text(" ", strip=True).split()[:30])
-        info["text_sample"] = sample[:500]
+        q_url = "https://duckduckgo.com/html/?q=" + requests.utils.quote(f'site:dxomark.com "{brand} {model}" camera')
+        html_text = _http_get(q_url, timeout=6, headers=SEARCH_HEADERS)
+        sample = " ".join(_soup(html_text).get_text(" ", strip=True).split()[:30])
+        info["ddg_text_sample"] = sample[:400]
     except Exception:
         pass
-
     return info
