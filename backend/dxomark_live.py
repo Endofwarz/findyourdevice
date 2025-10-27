@@ -1,23 +1,26 @@
 # backend/dxomark_live.py
 from __future__ import annotations
 import os, re, time
-from typing import Optional, Tuple
+from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
-DXO_BASE = "https://www.dxomark.com"
 HEADERS = {
-    "User-Agent": os.getenv("REDDIT_USER_AGENT") or "Mozilla/5.0 (compatible; DXOFetch/1.0)",
-    "Accept-Language": "en-US,en;q=0.8",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
 }
-# tiny in-memory cache (avoid rate limits)
-_CACHE: dict[str, Tuple[float, Optional[int]]] = {}
-_TTL = 60 * 60  # 1 hour
 
-def _now() -> float:
-    return time.time()
+RANK_LIST_URLS = [
+    # Primary: list sorted by Camera
+    "https://www.dxomark.com/smartphones/?sort_by=camera",
+    # Legacy path some regions still serve
+    "https://www.dxomark.com/category/smartphones/",
+    # “smartphone ranking” landing (sometimes server renders list)
+    "https://www.dxomark.com/smartphones/smartphone-ranking/",
+]
 
-def _get(url: str, timeout: float = 12.0) -> str:
+def _get(url: str, timeout: int = 12) -> str:
     r = requests.get(url, headers=HEADERS, timeout=timeout)
     r.raise_for_status()
     return r.text
@@ -29,108 +32,135 @@ def _soup(html: str) -> BeautifulSoup:
         return BeautifulSoup(html, "html.parser")
 
 def _norm(s: str) -> str:
-    s = (s or "").lower()
-    s = s.replace("’", "'")
-    s = re.sub(r"[^a-z0-9+ ]+", " ", s)
+    s = re.sub(r"[\u00A0]+", " ", s or "")           # nbsp -> space
+    s = re.sub(r"[^a-z0-9+ ]", " ", s.lower())       # keep + to preserve 'pro+'
     s = re.sub(r"\s+", " ", s).strip()
-    # unifying common phone suffixes
-    s = s.replace(" pro max", " pro max")
-    s = s.replace(" pro+", " pro plus")
-    s = s.replace(" plus", " plus")
     return s
 
-def _name_key(brand: str, model: str) -> str:
-    return f"{_norm(brand)}::{_norm(model)}"
-
-def _matches(target: str, brand: str, model: str) -> bool:
-    t = _norm(target)
+def _canonical_name(brand: str, model: str) -> list[str]:
+    """
+    Build a few tolerant match keys (handles 'Pro Max' vs 'ProMax', etc.).
+    """
     b = _norm(brand)
     m = _norm(model)
-    # tolerate brand missing in the visible text (some tiles only show model)
-    return (m in t and (b in t or True))
 
-def _extract_rank_text(s: str) -> Optional[int]:
-    # look for "#12", "No. 12", or "Rank 12"
-    m = re.search(r"(?:#|no\.?\s*|rank\s*)(\d{1,3})", s, re.I)
-    if m:
-        try:
-            return int(m.group(1))
-        except Exception:
-            return None
-    return None
+    # Common variants
+    variants = set()
+    base = f"{b} {m}".strip()
+    variants.add(base)
 
-def _search_smartphones_listing_for_rank(brand: str, model: str) -> Optional[int]:
+    # 'pro max' <-> 'promax'
+    variants.add(base.replace(" pro max", " promax"))
+    variants.add(base.replace(" promax", " pro max"))
+
+    # remove brand (DXO sometimes omits brand in internal anchors); keep model only as a weaker fallback
+    variants.add(m)
+
+    # plus/minus signs and spaces
+    variants.add(base.replace(" +", "+"))
+    variants.add(base.replace("+", " plus"))
+
+    # remove storage/country tags just in case
+    variants.add(re.sub(r"\b(5g|4g|dual sim|usa|china|eu|global)\b", "", base).strip())
+
+    return [v for v in variants if v]
+
+def _best_match_index(titles: list[str], keys: list[str]) -> Optional[int]:
     """
-    Scrape https://www.dxomark.com/smartphones/ listing page and try to find
-    a tile/card with the phone name and its displayed rank.
+    Simple token containment/scoring: prefer full containment; fallback to highest token overlap.
     """
-    html = _get(f"{DXO_BASE}/smartphones/")
+    norm_titles = [_norm(t) for t in titles]
+    norm_keys   = [_norm(k) for k in keys]
+
+    # 1) exact or full containment
+    for ki, k in enumerate(norm_keys):
+        for i, t in enumerate(norm_titles):
+            if k and (k == t or k in t):
+                return i
+
+    # 2) token overlap
+    best_i, best_score = None, 0
+    for i, t in enumerate(norm_titles):
+        tset = set(t.split())
+        for k in norm_keys:
+            kset = set(k.split())
+            if not kset: 
+                continue
+            score = len(tset & kset) / max(1, len(kset))
+            if score > best_score:
+                best_score, best_i = score, i
+
+    return best_i
+
+def _parse_rank_from_list(html: str, brand: str, model: str) -> Optional[int]:
     soup = _soup(html)
 
-    # 1) look for obvious badges with numbers (e.g., tiles/cards)
-    candidates = []
-    for node in soup.select("a, div, span"):
-        txt = (node.get_text(" ", strip=True) or "")
+    # Try several list shapes
+
+    # A) Cards / rows with explicit “rank” cell/column
+    rows = []
+    # list items
+    rows += soup.select("li,div.ranking-list-item,div.card,article")
+    # table rows
+    rows += soup.select("table tr")
+
+    titles: list[str] = []
+    for r in rows:
+        txt = " ".join(x.get_text(" ", strip=True) for x in r.select("a, .title, .device, .card-title, .name") or [r])
+        txt = re.sub(r"\s+", " ", txt).strip()
         if not txt:
             continue
-        if _matches(txt, brand, model):
-            # Try reading rank from node or close vicinity
-            rank = _extract_rank_text(txt)
-            if rank is None:
-                near = " ".join((node.find_parent() or node).get_text(" ", strip=True)[:300].split())
-                rank = _extract_rank_text(near)
-            if rank is not None:
-                candidates.append(rank)
+        # Heuristic: keep only rows with smartphone-ish titles
+        if any(w in txt.lower() for w in ["iphone", "galaxy", "pixel", "oneplus", "xiaomi", "vivo", "oppo", "honor", "huawei"]):
+            titles.append(txt)
 
-    if candidates:
-        # pick the smallest visible rank (safest)
-        return min(candidates)
+    if titles:
+        idx = _best_match_index(titles, _canonical_name(brand, model))
+        if idx is not None:
+            # Rank is 1-based
+            return idx + 1
+
+    # B) Device page fallback — often contains “Overall ranking #N”
+    # Try a few slug shapes
+    guess_slugs = []
+    nm = _norm(f"{brand} {model}")
+    guess_slugs.append(re.sub(r"\s+", "-", nm))                       # apple-iphone-16-pro-max
+    guess_slugs.append(re.sub(r"\s+", "-", _norm(model)))             # iphone-16-pro-max
+
+    for g in guess_slugs:
+        for suffix in ["-camera-review", "-camera-test", ""]:
+            url = f"https://www.dxomark.com/smartphones/{g}{suffix}"
+            try:
+                page = _get(url)
+            except Exception:
+                continue
+            m = re.search(r"(?:overall\s+ranking|global\s+ranking)\s*#?\s*(\d{1,3})", page, re.I)
+            if not m:
+                # sometimes they render “Ranking \n #7”
+                m = re.search(r"ranking[^#]{0,15}#\s*(\d{1,3})", page, re.I)
+            if m:
+                return int(m.group(1))
 
     return None
 
 def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     """
-    Public entry. Returns the **rank number** (1…N) for the phone on DXOMARK's
-    smartphones ranking page. None if not found.
+    Returns 1-based DXOMARK camera rank for the given phone, or None.
     """
-    if os.getenv("USE_DXOMARK_LIVE", "0") != "1":
+    if os.getenv("USE_DXOMARK_LIVE", "1") != "1":
         return None
 
-    key = _name_key(brand, model)
-    if key in _CACHE:
-        ts, val = _CACHE[key]
-        if _now() - ts < _TTL:
-            return val
+    # Try main list pages first (fast + robust if server-rendered)
+    for url in RANK_LIST_URLS:
+        try:
+            html = _get(url)
+            rnk = _parse_rank_from_list(html, brand, model)
+            if isinstance(rnk, int) and rnk > 0:
+                print(f"[dxo] {brand} {model}: rank #{rnk} via list page {url}")
+                return rnk
+        except Exception as e:
+            print(f"[dxo] list fetch failed {url}: {e}")
 
-    try:
-        rank = _search_smartphones_listing_for_rank(brand, model)
-    except Exception as e:
-        print("[dxo] listing fetch failed:", e)
-        rank = None
-
-    _CACHE[key] = (_now(), rank)
-    return rank
-
-# ---------- small debug helpers (used by /dxo/diag) ----------
-def diag_dxomark(brand: str, model: str) -> dict:
-    out = {
-        "brand": brand, "model": model,
-        "env": {"USE_DXOMARK_LIVE": os.getenv("USE_DXOMARK_LIVE", "0")},
-        "result": None,
-        "notes": [],
-    }
-    if os.getenv("USE_DXOMARK_LIVE", "0") != "1":
-        out["notes"].append("USE_DXOMARK_LIVE is not '1' → scraper disabled")
-        return out
-    try:
-        html = _get(f"{DXO_BASE}/smartphones/")
-        out["notes"].append(f"listing_ok: {bool(html)}")
-        soup = _soup(html)
-        out["notes"].append(f"dom_ok: {bool(soup)}")
-        # quick peek
-        sample = soup.get_text(" ", strip=True)[:600]
-        out["notes"].append(f"text_sample: {sample[:180]}…")
-        out["result"] = fetch_dxomark_camera_rank(brand, model)
-    except Exception as e:
-        out["notes"].append(f"error: {e}")
-    return out
+    # If all failed, None
+    print(f"[dxo] {brand} {model}: rank not found")
+    return None

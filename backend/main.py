@@ -1309,7 +1309,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     Builds up to 6 candidate cards, merging:
       - live GSMA specs (no disk)
       - YouTube + Reddit pros/cons (deduped, intent-focused)
-      - DXOMARK camera RANK for the FIRST pick only (item['DxOMarkCameraRank'])
+      - DXOMARK camera score for the FIRST pick only
     """
     picks: list[dict] = []
     if d is None or d.empty:
@@ -1336,6 +1336,9 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception:
             pass
         return [], []
+
+    # only fetch DXO for the first card (perf)
+    dxo_done = False
 
     for idx, (_, row) in enumerate(ranked.iterrows()):
         brand = (row.get("Brand") or "").strip()
@@ -1382,7 +1385,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
         # --- Blend Reddit heuristics (live, lightweight) ---
         try:
-            r_pros, r_cons = _reddit_search_pros_cons(slug, brand, model)  # (pros, cons)
+            r_pros, r_cons = _reddit_search_pros_cons(slug, brand, model)  # returns (pros, cons)
             pros = (pros or []) + (r_pros or [])
             cons = (cons or []) + (r_cons or [])
         except Exception as e:
@@ -1417,7 +1420,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Brand": brand,
             "Model": model,
             "ReleaseYear": fnum(merged.get("ReleaseYear"), int) or 0,
-            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,
+            "PriceUSD": fnum(row.get("PriceUSD"), float) or 0.0,  # keep price logic as-is
             "DisplayInches": fnum(merged.get("DisplayInches"), float),
             "Battery_mAh": fnum(merged.get("Battery_mAh"), int),
             "RAM_GB": fnum(merged.get("RAM_GB"), float),
@@ -1433,14 +1436,19 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons or [],
         }
 
-        # --- DXOMARK: first pick only (rank badge) ---
+        # --- DXOMARK: first pick only (adds item["DxOMarkCamera"]) ---
         try:
-            if idx == 0 and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
-                rnk = fetch_dxomark_camera_rank(brand, model)  # may be None
-                if rnk:
-                    item["DxOMarkCameraRank"] = int(rnk)
+            if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
+                s = fetch_dxomark_camera_score(brand, model)  # may return None
+                if s is not None:
+                    try:
+                        item["DxOMarkCamera"] = int(s)
+                    except Exception:
+                        item["DxOMarkCamera"] = s
+                dxo_done = True
         except Exception as e:
-            print("[dxo] fetch rank failed:", e)
+            print("[dxo] fetch failed:", e)
+            dxo_done = True  # avoid retrying for next items
 
         # --- optional live offer ---
         try:
