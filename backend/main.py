@@ -518,39 +518,6 @@ def _load_youtube_signals(slug: str, brand: str | None = None, model: str | None
 
 
 # ------------------ end YouTube live block ------------------
-# --- DXOMARK (very conservative, best-effort) -------------------------------
-import re as _re
-
-def _dxo_score_from_html(html: str) -> int | None:
-    # DXOMARK layouts vary. Try a couple of common patterns; keep it simple.
-    # e.g., 'Camera score 154', or JSON "score":154 near "Camera".
-    m = _re.search(r"Camera\s*score[^0-9]{0,12}(\d{2,3})", html, _re.I)
-    if m: 
-        return int(m.group(1))
-    m = _re.search(r'"Camera"[^}]+?"score"\s*:\s*(\d{2,3})', html)
-    if m:
-        return int(m.group(1))
-    return None
-
-def _dxomark_score(brand: str, model: str) -> int | None:
-    """Very best-effort. We first try a search; then open the first dxomark smartphone page."""
-    try:
-        q = f'{brand} {model} site:dxomark.com smartphone camera score'
-        r = requests.get("https://duckduckgo.com/html", params={"q": q}, timeout=10,
-                         headers={"User-Agent": "Mozilla/5.0"})
-        r.raise_for_status()
-        # find first dxomark smartphone link
-        m = _re.search(r'href="(https?://[^"]*dxomark\.com[^"]*smartphone[^"]*)"', r.text, _re.I)
-        if not m:
-            return None
-        url = m.group(1).replace("&amp;", "&")
-        h = requests.get(url, timeout=12, headers={"User-Agent": "Mozilla/5.0"})
-        h.raise_for_status()
-        return _dxo_score_from_html(h.text)
-    except Exception as e:
-        print("[dxomark] fetch failed:", e)
-        return None
-# --- end DXOMARK block -------------------------------------------------------
 
 # =========================
 # Config
