@@ -1,7 +1,7 @@
 # backend/dxomark_live.py
 from __future__ import annotations
-import os, re
-from typing import Optional, List
+import os, re, json
+from typing import Optional
 import requests
 from bs4 import BeautifulSoup
 
@@ -10,13 +10,11 @@ DXO_HEADERS = {
                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
     "Referer": "https://www.dxomark.com/",
 }
 
-def _http_get(url: str, timeout: float = 12.0, headers: dict | None = None) -> str:
-    r = requests.get(url, headers=headers or DXO_HEADERS, timeout=timeout, allow_redirects=True)
+def _http_get(url: str, timeout: float = 12.0) -> str:
+    r = requests.get(url, headers=DXO_HEADERS, timeout=timeout, allow_redirects=True)
     r.raise_for_status()
     return r.text
 
@@ -26,151 +24,105 @@ def _soup(html_text: str) -> BeautifulSoup:
     except Exception:
         return BeautifulSoup(html_text, "html.parser")
 
-def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "").strip()).lower()
+def _build_url(brand: str, model: str) -> str:
+    """
+    Build canonical DXOMARK smartphone URL using new format:
+    https://www.dxomark.com/smartphones/<Brand>/<Model>
+    Example: Apple / iPhone-16-Pro-Max
+    """
+    b = brand.strip().replace(" ", "-")
+    m = model.strip().replace(" ", "-")
+    return f"https://www.dxomark.com/smartphones/{b}/{m}"
 
-def _slug(brand: str, model: str) -> str:
-    nm = _norm(f"{brand} {model}")
-    return re.sub(r"[^a-z0-9]+", "-", nm).strip("-")
-
-# --- WordPress search to find the exact device URL ----------------------------
-
-def _wp_search_urls(brand: str, model: str, limit: int = 8) -> List[str]:
-    q = f"{brand} {model}"
-    url = f"https://www.dxomark.com/wp-json/wp/v2/search?search={requests.utils.quote(q)}&per_page={limit}"
+def _extract_rank_from_json(html_text: str) -> Optional[int]:
+    """
+    Parses rank from DXOMARK's __NEXT_DATA__ JSON payload.
+    Usually under props.pageProps.device.rankings.camera.overall.position or similar.
+    """
+    soup = _soup(html_text)
+    tag = soup.find("script", {"id": "__NEXT_DATA__"})
+    if not tag:
+        return None
     try:
-        js = requests.get(url, headers=DXO_HEADERS, timeout=10).json()
-    except Exception as e:
-        print("[dxo] wp search failed:", e)
-        return []
-    urls = []
-    for row in js or []:
-        href = row.get("url") or row.get("link") or ""
-        if not href:
-            continue
-        # Prefer smartphone/camera pages
-        if any(x in href for x in ("/smartphones/", "-camera", "-camera-review", "-camera-test")):
-            urls.append(href)
-    # de-dupe while preserving order
-    out, seen = [], set()
-    for u in urls:
-        if u not in seen:
-            out.append(u); seen.add(u)
-    return out
+        data = json.loads(tag.string)
+    except Exception:
+        return None
 
-# --- Extractors from device page ---------------------------------------------
+    def deep_find(obj, key):
+        if isinstance(obj, dict):
+            if key in obj:
+                return obj[key]
+            for v in obj.values():
+                found = deep_find(v, key)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for v in obj:
+                found = deep_find(v, key)
+                if found is not None:
+                    return found
+        return None
 
-_RANK_TEXT_PATTERNS = [
-    r"(?:overall|global)\s+ranking\s*#\s*(\d{1,3})",
-    r"ranking[^#]{0,20}#\s*(\d{1,3})",
-    r"#\s*(\d{1,3})\s*(?:in\s*our\s*ranking|overall\s*ranking)",
-    r"\brank\s*#\s*(\d{1,3})\b",
-]
+    # Try common key paths
+    for k in ("rankingPosition", "rank", "position"):
+        val = deep_find(data, k)
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str) and val.isdigit():
+            return int(val)
+    return None
 
-_SCRIPT_PATTERNS = [
-    r'"rankingPosition"\s*:\s*(\d{1,3})',
-    r"'rankingPosition'\s*:\s*(\d{1,3})",
-    r'"cameraRanking"\s*:\s*{[^}]*"position"\s*:\s*(\d{1,3})',
-]
-
-_ATTR_PATTERNS = [
-    r'data-ranking-position\s*=\s*"(\d{1,3})"',
-    r'data-rank\s*=\s*"(\d{1,3})"',
-]
-
-def _extract_rank_from_html(html_text: str) -> Optional[int]:
-    # 1) try inline scripts first (most reliable lately)
-    for pat in _SCRIPT_PATTERNS:
-        m = re.search(pat, html_text, re.I)
-        if m:
-            try: return int(m.group(1))
-            except: pass
-    # 2) try data-* attributes
-    for pat in _ATTR_PATTERNS:
-        m = re.search(pat, html_text, re.I)
-        if m:
-            try: return int(m.group(1))
-            except: pass
-    # 3) fallback to visible text
+def _extract_rank_fallback_text(html_text: str) -> Optional[int]:
+    """
+    Fallback for rare cases: visible 'Overall ranking #7'
+    """
     text = " ".join(_soup(html_text).get_text(" ", strip=True).split())
-    for pat in _RANK_TEXT_PATTERNS:
-        m = re.search(pat, text, re.I)
-        if m:
-            try: return int(m.group(1))
-            except: pass
+    m = re.search(r"ranking[^#]{0,20}#\s*(\d{1,3})", text, re.I)
+    if m:
+        return int(m.group(1))
     return None
-
-def _try_device_pages(brand: str, model: str) -> Optional[int]:
-    # Attempt obvious slugs first (fast path)
-    slug = _slug(brand, model)
-    candidates = [
-        f"https://www.dxomark.com/{slug}-camera/",
-        f"https://www.dxomark.com/smartphones/{slug}-camera-review/",
-        f"https://www.dxomark.com/smartphones/{slug}-camera-test/",
-        f"https://www.dxomark.com/smartphones/{slug}/",
-        f"https://www.dxomark.com/{slug}/",
-    ]
-    for url in candidates:
-        try:
-            html_text = _http_get(url, timeout=10)
-            rnk = _extract_rank_from_html(html_text)
-            if rnk:
-                print(f"[dxo] rank via device slug {url}: #{rnk}")
-                return rnk
-        except Exception:
-            continue
-    return None
-
-def _try_wp_search_then_parse(brand: str, model: str) -> Optional[int]:
-    for url in _wp_search_urls(brand, model):
-        try:
-            html_text = _http_get(url, timeout=10)
-            rnk = _extract_rank_from_html(html_text)
-            if rnk:
-                print(f"[dxo] rank via wp search {url}: #{rnk}")
-                return rnk
-        except Exception:
-            continue
-    return None
-
-# --- Public API ---------------------------------------------------------------
 
 def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     """
-    Returns 1-based DXOMARK camera rank for the given phone, or None.
-    Strategy:
-      1) Device slug pages
-      2) WordPress search -> device page -> parse inline JSON / attributes / text
+    Returns DXOMARK camera rank (int) for the given phone, or None.
     """
     if os.getenv("USE_DXOMARK_LIVE", "1") != "1":
         return None
 
-    rnk = _try_device_pages(brand, model)
-    if rnk:
-        return rnk
-    rnk = _try_wp_search_then_parse(brand, model)
-    if rnk:
-        return rnk
+    url = _build_url(brand, model)
+    try:
+        html_text = _http_get(url)
+    except Exception as e:
+        print(f"[dxo] fetch failed {url}: {e}")
+        return None
 
-    print(f"[dxo] {_norm(brand)} {_norm(model)}: rank not found")
+    # Try modern JSON structure
+    rank = _extract_rank_from_json(html_text)
+    if rank:
+        print(f"[dxo] {brand} {model}: rank #{rank} (JSON) {url}")
+        return rank
+
+    # Fallback visible text
+    rank = _extract_rank_fallback_text(html_text)
+    if rank:
+        print(f"[dxo] {brand} {model}: rank #{rank} (text) {url}")
+        return rank
+
+    print(f"[dxo] {brand} {model}: rank not found {url}")
     return None
 
+# --- diagnostics helper -------------------------------------------------------
+
 def diag_dxomark(brand: str, model: str):
-    """
-    Diagnostic payload to call from /dxo/diag
-    """
     info = {
         "brand": brand,
         "model": model,
+        "url": _build_url(brand, model),
         "env": {"USE_DXOMARK_LIVE": os.getenv("USE_DXOMARK_LIVE", "")},
     }
     try:
-        info["result"] = fetch_dxomark_camera_rank(brand, model)
+        rnk = fetch_dxomark_camera_rank(brand, model)
+        info["result"] = rnk
     except Exception as e:
         info["error"] = str(e)
-    try:
-        # Include one WP search hit to prove connectivity
-        info["wp_search_urls"] = _wp_search_urls(brand, model)[:3]
-    except Exception:
-        pass
     return info
