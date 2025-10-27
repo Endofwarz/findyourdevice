@@ -67,6 +67,25 @@ app.add_middleware(
 from pydantic import BaseModel
 from fastapi import Request
 
+from fastapi import FastAPI
+from reddit_live import reddit_diag, reddit_search_pros_cons
+
+app = FastAPI()
+
+@app.get("/reddit/diag")
+def reddit_diag_api(brand: str = "Apple", model: str = "16 Pro Max"):
+    return reddit_diag(brand, model)
+
+# (Optional) keep your existing /reddit/test but make it return json with detail
+@app.get("/reddit/test")
+def reddit_test_api(brand: str, model: str):
+    try:
+        pros, cons = reddit_search_pros_cons(brand, model)
+        return {"ok": True, "brand": brand, "model": model, "pros": pros, "cons": cons}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 import csv, pathlib
 
 GSMA_OUT = os.getenv("GSMA_OUT", "data/processed/phones_gsma.csv")
