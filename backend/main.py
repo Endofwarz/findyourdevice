@@ -1273,6 +1273,7 @@ except Exception:
 
 # at the top of the file if not already present
 import os
+from dxomark_live import cached_dxomark_rank
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     """

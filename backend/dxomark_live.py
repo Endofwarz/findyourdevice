@@ -184,6 +184,14 @@ def fetch_dxomark_camera_rank(brand: str, model: str) -> Optional[int]:
     print(f"[dxo] {brand} {model}: rank not found")
     return None
 
+
+# caching wrapper so repeated lookups are fast
+from functools import lru_cache
+
+@lru_cache(maxsize=128)
+def cached_dxomark_rank(brand: str, model: str):
+    return fetch_dxomark_camera_rank(brand, model)
+
 from functools import lru_cache
 
 @lru_cache(maxsize=64)
