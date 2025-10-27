@@ -1304,12 +1304,15 @@ except Exception:
     def _reddit_search_pros_cons(*_args, **_kwargs):  # (slug, brand, model) -> (pros, cons)
         return [], []
 
+# at the top of the file if not already present
+import os
+
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     """
     Builds up to 6 candidate cards, merging:
       - live GSMA specs (no disk)
       - YouTube + Reddit pros/cons (deduped, intent-focused)
-      - DXOMARK camera score for the FIRST pick only
+      - DXOMARK camera RANK for the FIRST pick only
     """
     picks: list[dict] = []
     if d is None or d.empty:
@@ -1436,19 +1439,16 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "Cons": cons or [],
         }
 
-        # --- DXOMARK: first pick only (adds item["DxOMarkCamera"]) ---
+        # --- DXOMARK rank: first pick only ---
         try:
             if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
-                s = fetch_dxomark_camera_score(brand, model)  # may return None
-                if s is not None:
-                    try:
-                        item["DxOMarkCamera"] = int(s)
-                    except Exception:
-                        item["DxOMarkCamera"] = s
+                rnk = fetch_dxomark_camera_rank(brand, model)  # int | None
+                if rnk is not None:
+                    item["DxOMarkCameraRank"] = int(rnk)
                 dxo_done = True
         except Exception as e:
             print("[dxo] fetch failed:", e)
-            dxo_done = True  # avoid retrying for next items
+            dxo_done = True  # avoid retrying on later items
 
         # --- optional live offer ---
         try:
@@ -1467,7 +1467,6 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         picks.append(item)
 
     return picks
-
 
 
 def _enrich_bullets_llm(intent: dict, brand: str, model: str,
