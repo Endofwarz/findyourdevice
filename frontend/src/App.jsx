@@ -134,6 +134,34 @@ function amazonAffiliateSearchUrl(pick) {
   return tag ? `${base}&tag=${encodeURIComponent(tag)}` : base;
 }
 
+/* ---------- marketplace helpers ---------- */
+function searchLinksForPick(pick) {
+  const q = encodeURIComponent([pick?.Brand, pick?.Model].filter(Boolean).join(" ").trim());
+  return [
+    {
+      id: "amazon",
+      name: "Amazon",
+      url: `https://www.amazon.de/s?k=${q}`,
+      logo: "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg",
+    },
+    {
+      id: "prisjakt",
+      name: "Prisjakt",
+      url: `https://www.prisjakt.nu/search?search=${q}`,
+      logo: "https://assets.prisjakt.nu/assets/logo/prisjakt-logo.svg",
+    },
+    {
+      id: "idealo",
+      name: "idealo",
+      url: `https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q=${q}`,
+      logo: "https://upload.wikimedia.org/wikipedia/commons/0/0e/Idealo_logo.svg",
+    },
+    // you can add Google Shopping too:
+    // { id:"gshop", name:"Google Shopping", url:`https://www.google.com/search?tbm=shop&q=${q}`, logo:"…" }
+  ];
+}
+
+
 
 /* ------------------------- session hook ------------------------- */
 function useSession() {
@@ -841,6 +869,166 @@ function PhoneImage({ localSrc, remoteSrc, brandLogo, alt }) {
   );
 }
 
+/* ---------- Flippable phone card ---------- */
+function FlippableCard({
+  pick,
+  variant = "featured",     // "featured" | "alt"
+  showBlurb,
+  blurb,
+  onMakeMain,               // optional (shown on alt)
+}) {
+  const [flipped, setFlipped] = React.useState(false);
+  const markets = React.useMemo(() => searchLinksForPick(pick), [pick]);
+
+  // sizes / styles per variant
+  const isFeatured = variant === "featured";
+  const shell = isFeatured
+    ? "max-w-5xl mx-auto rounded-3xl p-6 md:p-8"
+    : "rounded-3xl p-4";
+
+  return (
+    <div className={`relative bg-white shadow ring-1 ring-slate-200 ${shell}`}>
+      {/* badge + flip control row */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          {!isFeatured && (
+            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border">
+              Alternative
+            </span>
+          )}
+          <div className="text-lg md:text-xl font-semibold">
+            {(pick?.Brand ?? "")} {(pick?.Model ?? "")}
+          </div>
+        </div>
+
+        <button
+          className="text-xs md:text-sm px-3 py-1.5 rounded-full border bg-slate-50 hover:bg-slate-100"
+          onClick={() => setFlipped((f) => !f)}
+          title={flipped ? "Back to details" : "Where to buy"}
+        >
+          {flipped ? "Back" : "Where to buy"}
+        </button>
+      </div>
+
+      {/* card faces */}
+      <div className="relative perspective-[1200px]">
+        <div
+          className={`transition-transform duration-500 [transform-style:preserve-3d] ${
+            flipped ? "[transform:rotateY(180deg)]" : ""
+          }`}
+        >
+          {/* FRONT */}
+          <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center [backface-visibility:hidden]">
+            <div className="mx-auto w-full">
+              <PhoneImage
+                localSrc={pick?.ImageLocal}
+                remoteSrc={pick?.ImageURL}
+                brandLogo={pick?.BrandLogo}
+                alt={`${pick?.Brand ?? ""} ${pick?.Model ?? ""}`}
+              />
+            </div>
+
+            <div>
+              {/* Specs row */}
+              <div className="text-sm text-slate-500">
+                {(pick?.OS ?? "—")} • {(pick?.ReleaseYear ?? "—")}
+              </div>
+              <div className="text-sm text-slate-500">
+                {pick?.DisplayInches ? `${Number(pick.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                {pick?.Battery_mAh ? `${pick.Battery_mAh} mAh` : "—"} •{" "}
+                {pick?.RAM_GB ? `${pick.RAM_GB} GB RAM` : "—"} •{" "}
+                {pick?.Storage_GB ? `${pick.Storage_GB} GB` : "—"}
+              </div>
+
+              {/* blurb only for featured (current main) */}
+              {showBlurb && blurb ? (
+                <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                  {blurb}
+                </div>
+              ) : null}
+
+              {/* pros/cons */}
+              {(pick?.Pros?.length || pick?.Cons?.length) ? (
+                <div className="grid md:grid-cols-2 gap-6 mt-5">
+                  <div>
+                    <div className="text-sm font-medium">Why it fits</div>
+                    <BulletList items={pick?.Pros || []} pick={pick} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">Trade-offs</div>
+                    <BulletList items={pick?.Cons || []} pick={pick} isCon />
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Make main (only on alt) */}
+              {!isFeatured && onMakeMain ? (
+                <div className="mt-4">
+                  <button
+                    className="px-4 py-2 rounded-2xl bg-black text-white text-sm"
+                    onClick={onMakeMain}
+                    title="Promote to main pick"
+                  >
+                    Make main pick
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* BACK (marketplaces) */}
+          <div className="absolute inset-0 [backface-visibility:hidden] [transform:rotateY(180deg)]">
+            <div className="h-full grid place-items-center">
+              <div className="w-full">
+                <div className="text-sm text-slate-600 mb-3">
+                  Quick links (opens in new tab)
+                </div>
+                <div className="grid sm:grid-cols-3 gap-3">
+                  {markets.map((m) => (
+                    <a
+                      key={m.id}
+                      href={m.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="group flex items-center gap-3 border rounded-2xl px-3 py-2 hover:shadow-sm hover:bg-slate-50"
+                      title={`Find ${pick?.Brand} ${pick?.Model} on ${m.name}`}
+                    >
+                      <div className="h-6 w-16 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={m.logo}
+                          alt={m.name}
+                          className="object-contain max-h-6 max-w-[64px] opacity-80 group-hover:opacity-100"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="text-sm">{m.name}</div>
+                    </a>
+                  ))}
+                </div>
+                <div className="mt-3 text-xs text-slate-500">
+                  We’re not tracking prices here yet — these are search links for your region.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* DXOMARK badge (featured only if present) */}
+      {variant === "featured" && "DxOMarkCameraRank" in (pick || {}) && (
+        <div
+          className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+          style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+          title="DXOMARK Camera ranking"
+        >
+          DXOMARK • #{pick.DxOMarkCameraRank ?? "—"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function Bullet({ text, tip }) {
   return (
     <li className="grid grid-cols-[1fr,auto] gap-2 items-start">
@@ -859,150 +1047,31 @@ function ResultsView({ picks, blurb }) {
     );
   }
 
-  const [featured, ...rest] = picks;
+  // Which item is "main" right now
+  const [mainIdx, setMainIdx] = React.useState(0);
+  const featured = picks[mainIdx] || picks[0];
 
-  const PricePill = ({ pick }) => {
-    const msrp = pick?.MSRP; // expected shape: { price: number, currency: "EUR" | "SEK" | ... }
-    const live = pick?.LiveOffer; // optional: { price, currency, retailer, url, in_stock }
-
-    const price = (msrp && Number(msrp.price)) || (live && Number(live.price));
-    const currency = (msrp && msrp.currency) || (live && live.currency) || "EUR";
-    if (!Number.isFinite(price)) return null;
-
-    const label = msrp ? "MSRP" : (live?.retailer === "amazon" ? "Amazon" : "Price");
-    const affUrl = amazonAffiliateSearchUrl(pick);
-
-    return (
-      <div className="mt-1 inline-flex items-center gap-2 rounded-2xl bg-indigo-600/10 text-indigo-900 px-3 py-1 text-sm">
-        <span className="font-semibold">{currency} {formatMoney(price)}</span>
-        <span className="opacity-70">• {label}</span>
-        <a
-          href={affUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="ml-1 underline hover:no-underline"
-          title="Open Amazon in a new tab"
-        >
-          Find on Amazon
-        </a>
-      </div>
-    );
-  };
-
-  const SpecsLine = ({ p }) => (
-    <div className="text-sm text-slate-500">
-      {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-      {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
-      {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
-      {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
-    </div>
-  );
+  // everything else in order
+  const rest = picks
+    .map((p, i) => ({ p, i }))
+    .filter(({ i }) => i !== mainIdx);
 
   return (
     <div className="space-y-8">
-      {/* HERO */}
-      <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
-        {"DxOMarkCameraRank" in (featured || {}) && (
-          <div
-            className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-            style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-            title="DXOMARK Camera ranking"
-          >
-            DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
-          </div>
-        )}
+      {/* Featured (large, flippable) */}
+      <FlippableCard pick={featured} variant="featured" showBlurb={true} blurb={blurb} />
 
-        <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-          <div className="mx-auto w-full">
-            <PhoneImage
-              localSrc={featured?.ImageLocal}
-              remoteSrc={featured?.ImageURL}
-              brandLogo={featured?.BrandLogo}
-              alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-            />
-          </div>
-
-          <div>
-            <div className="text-2xl md:text-3xl font-semibold">
-              {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
-            </div>
-
-            {/* --> Price pill + affiliate link */}
-            <PricePill pick={featured} />
-
-            <div className="text-sm text-slate-500 mt-1">
-              {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
-            </div>
-            <SpecsLine p={featured} />
-
-            {blurb ? (
-              <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
-                {blurb}
-              </div>
-            ) : null}
-
-            {(featured?.Pros?.length || featured?.Cons?.length) ? (
-              <div className="grid md:grid-cols-2 gap-6 mt-5">
-                <div>
-                  <div className="text-sm font-medium">Why it fits</div>
-                  <BulletList items={featured?.Pros || []} pick={featured} />
-                </div>
-                <div>
-                  <div className="text-sm font-medium">Trade-offs</div>
-                  <BulletList items={featured?.Cons || []} pick={featured} isCon />
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      {/* Runner-ups */}
+      {/* Runner-ups (flippable, can promote to main) */}
       {rest.length > 0 && (
         <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
-          {rest.map((p, idx) => (
-            <div key={idx} className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200">
-              <PhoneImage
-                localSrc={p?.ImageLocal}
-                remoteSrc={p?.ImageURL}
-                brandLogo={p?.BrandLogo}
-                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
-              />
-
-              <div className="mt-3">
-                <div className="text-lg font-semibold">
-                  {(p?.Brand ?? "")} {(p?.Model ?? "")}
-                </div>
-
-                {/* small price line + Amazon link */}
-                <div className="mt-0.5 text-xs text-slate-600">
-                  <PricePill pick={p} />
-                </div>
-
-                <div className="text-xs text-slate-500">
-                  {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
-                </div>
-                <div className="text-xs text-slate-500">
-                  {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                  {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
-                  {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
-                  {p?.Storage_GB ? `${p?.Storage_GB} GB` : "—"}
-                </div>
-              </div>
-
-              {(p?.Pros?.length || p?.Cons?.length) ? (
-                <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
-                  <div>
-                    <div className="text-sm font-medium">Pros</div>
-                    <BulletList items={p?.Pros || []} pick={p} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">Cons</div>
-                    <BulletList items={p?.Cons || []} pick={p} isCon />
-                  </div>
-                </div>
-              ) : null}
-            </div>
+          {rest.map(({ p, i }) => (
+            <FlippableCard
+              key={`${p?.Brand}-${p?.Model}-${i}`}
+              pick={p}
+              variant="alt"
+              showBlurb={false}
+              onMakeMain={() => setMainIdx(i)}
+            />
           ))}
         </div>
       )}
