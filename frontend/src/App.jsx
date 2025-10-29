@@ -83,15 +83,6 @@ function retailerLabel(id) {
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
-function retailerLabel(id) {
-  if (!id) return "retailer";
-  const m = String(id).toLowerCase();
-  if (m === "ebay") return "eBay";
-  if (m === "amazon") return "Amazon";
-  if (m === "bestbuy") return "Best Buy";
-  return id.charAt(0).toUpperCase() + id.slice(1);
-}
-
 /* format 1234.5 -> "1 234.50" (thin space for readability) */
 function formatMoney(v) {
   const n = Number(v);
