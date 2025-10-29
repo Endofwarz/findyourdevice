@@ -1,4 +1,5 @@
 from __future__ import annotations
+from amazon_live import fetch_amazon_offer
 import traceback
 from gsma_scraper import fetch_specs_live, ScrapeError
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
@@ -1418,11 +1419,42 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[dxo] fetch failed:", e)
             dxo_done = True  # avoid retrying on later items
 
-        # --- optional live offer ---
+EUR_PER_USD = float(os.getenv("FX_EUR_PER_USD", "0.93"))  # tweak via env if you want
+
+def _usd_to_eur(v):
+    try:
+        return round(float(v) * EUR_PER_USD, 2) if v is not None else None
+    except Exception:
+        return None
+
+ # --- optional live offer (Amazon) + MSRP fallback (EUR) ---
         try:
-            offer = best_offer_for_slug(slug)
-            if offer:
-                item["LiveOffer"] = offer
+            # IMPORTANT: pass (brand, model), NOT slug
+            amz = fetch_amazon_offer(brand, model)  # None or {price, currency, url, ...}
+
+            if amz:
+                # Normalize to what the frontend already renders
+                item["LiveOffer"] = {
+                    "retailer": "amazon",
+                    "url": amz.get("url"),
+                    "price": amz.get("price"),                   # float
+                    "currency": amz.get("currency", "EUR"),
+                    "in_stock": True,
+                }
+            else:
+                # MSRP fallback: prefer EUR if present in your CSV, else convert USD
+                msrp_eur = fnum(row.get("PriceEUR"), float)
+                if not msrp_eur:
+                    msrp_eur = _usd_to_eur(fnum(row.get("PriceUSD"), float))
+
+                if msrp_eur:
+                    item["LiveOffer"] = {
+                        "retailer": "msrp",
+                        "url": None,                              # no link for MSRP
+                        "price": msrp_eur,
+                        "currency": "EUR",
+                        "in_stock": True,
+                    }
         except Exception as _e:
             print("[offers] attach failed:", _e)
 
