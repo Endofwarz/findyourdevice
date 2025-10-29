@@ -44,7 +44,7 @@ async function j(url, init) {
     const r = await fetch(url, init);
     const text = await r.text(); // always read text first
     if (!r.ok) {
-      const msg = text?.slice(0, 800) || `${r.status} ${r.statusText}`;
+      const msg = text?.slice(0, 800) || `€{r.status} €{r.statusText}`;
       throw new Error(msg);
     }
     // try parse JSON, but don’t crash the UI if it isn’t JSON
@@ -57,17 +57,17 @@ async function j(url, init) {
 }
 
 async function startChat() {
-  return j(`${API}/chat/start`, { method: "POST" });
+  return j(`€{API}/chat/start`, { method: "POST" });
 }
 async function msgChat(session_id, message) {
-  return j(`${API}/chat/message`, {
+  return j(`€{API}/chat/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id, message }),
   });
 }
 async function patchChat(session_id, patch) {
-  return j(`${API}/chat/patch`, {
+  return j(`€{API}/chat/patch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id, patch }),
@@ -82,6 +82,23 @@ function retailerLabel(id) {
   if (m === "bestbuy") return "Best Buy";
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
+
+function retailerLabel(id) {
+  if (!id) return "retailer";
+  const m = String(id).toLowerCase();
+  if (m === "ebay") return "eBay";
+  if (m === "amazon") return "Amazon";
+  if (m === "bestbuy") return "Best Buy";
+  return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+/* format 1234.5 -> "1 234.50" (thin space for readability) */
+function formatMoney(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "");
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 
 /* ------------------------- session hook ------------------------- */
 function useSession() {
@@ -331,7 +348,7 @@ const finishAndSearch = async () => {
                 <div className="text-center text-xl md:text-2xl font-semibold">Tell us what you’re looking for</div>
                 <textarea
                   className="w-full mt-5 rounded-2xl border p-4 min-h-[140px]"
-                  placeholder="E.g., I want a compact Android under $600 with great battery and wireless charging."
+                  placeholder="E.g., I want a compact Android under €600 with great battery and wireless charging."
                   value={describeText}
                   onChange={(e) => setDescribeText(e.target.value)}
                 />
@@ -383,7 +400,7 @@ const finishAndSearch = async () => {
               <div className="mt-4 flex gap-3">
                 <input
                   className="flex-1 rounded-2xl border px-3 py-3"
-                  placeholder="E.g., I actually prefer iOS, and I can spend up to $900."
+                  placeholder="E.g., I actually prefer iOS, and I can spend up to €900."
                   value={refineText}
                   onChange={(e) => setRefineText(e.target.value)}
 onKeyDown={async (e) => {
@@ -443,7 +460,7 @@ function CategoryCard({ title, onClick, disabled }) {
     <button
       onClick={!disabled ? onClick : undefined}
       className={`relative w-full max-w-xs h-36 rounded-3xl border shadow-sm flex flex-col items-center justify-center text-xl font-medium transition
-        ${disabled ? "opacity-60 cursor-not-allowed" : "bg-white hover:shadow-md active:scale-[0.99] border-indigo-200"}`}
+        €{disabled ? "opacity-60 cursor-not-allowed" : "bg-white hover:shadow-md active:scale-[0.99] border-indigo-200"}`}
     >
       <Icon className="h-9 w-9 text-indigo-600 mb-2" />
       <span className="text-slate-800">{title}</span>
@@ -495,7 +512,7 @@ function ModeCard({ variant = "simple", onClick, disabled = false }) {
       onClick={!disabled ? onClick : undefined}
  className={`w-full max-w-[420px] h-full min-h-[220px] rounded-3xl border p-5 text-left transition
                   flex flex-col justify-between
-        ${disabled ? "opacity-40 cursor-not-allowed" : "bg-white hover:shadow-md border-indigo-200"}`}
+        €{disabled ? "opacity-40 cursor-not-allowed" : "bg-white hover:shadow-md border-indigo-200"}`}
     >
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -592,7 +609,7 @@ function WizardStep({ stepIndex, total, stepDef, intent, onPatch, onBack, onNext
 
           <div className="mt-10 flex items-center justify-between">
             <button
-              className={`px-5 py-3 rounded-2xl border text-base md:text-lg ${stepIndex === 0 ? "opacity-40 cursor-not-allowed" : ""}`}
+              className={`px-5 py-3 rounded-2xl border text-base md:text-lg €{stepIndex === 0 ? "opacity-40 cursor-not-allowed" : ""}`}
               onClick={onBack} disabled={stepIndex === 0}
             >
               ← Back
@@ -625,7 +642,7 @@ if (type === "budget") {
         onChange={(e) => onPatch({ budget: Number(e.target.value) })}
         className="w-full h-3 accent-indigo-600"
       />
-      <div className="mt-3 text-3xl font-semibold">${Math.round(v)}</div>
+      <div className="mt-3 text-3xl font-semibold">€{Math.round(v)}</div>
     </div>
   );
 }
@@ -673,13 +690,13 @@ if (type === "budget") {
   }
 
   if (type === "ram") {
-    const v = Number.isFinite(intent.min_ram) ? `${intent.min_ram} GB` : "No preference";
+    const v = Number.isFinite(intent.min_ram) ? `€{intent.min_ram} GB` : "No preference";
     const choose = (x) => onPatch({ min_ram: x === "No preference" ? null : Number(String(x).replace(/\D+/g,"")) });
     return <SegmentedBig options={["No preference", "6 GB", "8 GB", "12 GB"]} value={v} onChange={choose} />;
   }
 
   if (type === "storage") {
-    const v = Number.isFinite(intent.min_storage) ? `${intent.min_storage} GB` : "No preference";
+    const v = Number.isFinite(intent.min_storage) ? `€{intent.min_storage} GB` : "No preference";
     const choose = (x) => onPatch({ min_storage: x === "No preference" ? null : Number(String(x).replace(/\D+/g,"")) });
     return <SegmentedBig options={["No preference", "128 GB", "256 GB", "512 GB"]} value={v} onChange={choose} />;
   }
@@ -707,7 +724,7 @@ function SegmentedBig({ options, value, onChange }) {
           type="button"
           onClick={() => choose(opt)}
           className={`px-6 py-4 rounded-2xl border text-xl transition
-            ${local === opt ? "bg-indigo-600 text-white border-indigo-600 shadow"
+            €{local === opt ? "bg-indigo-600 text-white border-indigo-600 shadow"
                             : "bg-white hover:bg-indigo-50 border-indigo-200"}`}
         >
           {opt}
@@ -730,7 +747,7 @@ function ChipsBig({ options, selected = [], onChange }) {
         <button
           key={opt} type="button" onClick={() => toggle(opt)}
           className={`px-6 py-4 rounded-2xl border text-xl transition
-            ${local.has(opt) ? "bg-indigo-600 text-white border-indigo-600 shadow"
+            €{local.has(opt) ? "bg-indigo-600 text-white border-indigo-600 shadow"
                              : "bg-white hover:bg-indigo-50 border-indigo-200"}`}
         >
           {opt}
@@ -774,7 +791,7 @@ function PhoneImage({ localSrc, remoteSrc, brandLogo, alt }) {
 
   return (
     <div className={`w-full h-56 rounded-2xl flex items-center justify-center p-4
-      ${isLogo ? "bg-white border-2 border-indigo-100" : "bg-slate-100"}`}>
+      €{isLogo ? "bg-white border-2 border-indigo-100" : "bg-slate-100"}`}>
       {src ? (
         <img
           src={src}
@@ -809,94 +826,108 @@ function ResultsView({ picks, blurb }) {
 
   const [featured, ...rest] = picks;
 
+  /* small reusable price line */
+  const PriceLine = ({ offer }) => {
+    if (!offer || !offer.price) return null;
+    const cur = offer.currency || "EUR";
+    const body = (
+      <>
+        From {cur} {formatMoney(offer.price)}{" "}
+        {offer.retailer === "amazon" ? (
+          <span>on Amazon</span>
+        ) : (
+          <span>at MSRP</span>
+        )}
+        {offer.in_stock ? "" : " (out of stock)"}
+      </>
+    );
+    return offer.url && offer.retailer === "amazon" ? (
+      <a
+        href={offer.url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-block underline hover:no-underline"
+        title="Open offer in a new tab"
+      >
+        {body}
+      </a>
+    ) : (
+      <span className="inline-block">{body}</span>
+    );
+  };
+
   return (
     <div className="space-y-8">
       {/* HERO (centered, dominant) */}
-<div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
-{/* DXOMARK rank badge — bottom-right */}
-{"DxOMarkCameraRank" in (featured || {}) && (
-  <div
-    className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-    style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-    title="DXOMARK Camera ranking"
-  >
-    DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
-  </div>
-)}
-
-
-  <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-    <div className="mx-auto w-full">
-      <PhoneImage
-        localSrc={featured?.ImageLocal}
-        remoteSrc={featured?.ImageURL}
-        brandLogo={featured?.BrandLogo}
-        alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-      />
-    </div>
-
-    <div>
-      <div className="flex items-baseline justify-between">
-        <div className="text-2xl md:text-3xl font-semibold">
-          {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
-        </div>
-        <div className="text-2xl">
-          {featured?.PriceUSD ? `$${Math.round(featured.PriceUSD)}` : "—"}
-        </div>
-      </div>
-
-      <div className="text-sm text-slate-500 mt-1">
-        {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
-      </div>
-      <div className="text-sm text-slate-500">
-        {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-        {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-        {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-        {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-      </div>
-
-      {/* Live price / link */}
-      {featured?.LiveOffer && (
-        <a
-          href={featured.LiveOffer.url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-1 inline-block text-sm underline hover:no-underline"
-          title="Open offer in a new tab"
-        >
-          From {featured.LiveOffer.currency}{" "}
-          {typeof featured.LiveOffer.price === "number"
-            ? featured.LiveOffer.price.toFixed(2)
-            : featured.LiveOffer.price}{" "}
-          at {retailerLabel(featured.LiveOffer.retailer)}
-          {featured.LiveOffer.in_stock ? "" : " (out of stock)"}
-        </a>
-      )}
-
-      {/* Blurb */}
-      {blurb ? (
-        <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
-          {blurb}
-        </div>
-      ) : null}
-
-      {(featured?.Pros?.length || featured?.Cons?.length) ? (
-        <div className="grid md:grid-cols-2 gap-6 mt-5">
-          <div>
-            <div className="text-sm font-medium">Why it fits</div>
-            <BulletList items={featured?.Pros || []} pick={featured} />
+      <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
+        {/* DXOMARK rank badge — bottom-right */}
+        {"DxOMarkCameraRank" in (featured || {}) && (
+          <div
+            className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+            style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+            title="DXOMARK Camera ranking"
+          >
+            DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
           </div>
+        )}
+
+        <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+          <div className="mx-auto w-full">
+            <PhoneImage
+              localSrc={featured?.ImageLocal}
+              remoteSrc={featured?.ImageURL}
+              brandLogo={featured?.BrandLogo}
+              alt={`€{featured?.Brand ?? ""} €{featured?.Model ?? ""}`}
+            />
+          </div>
+
           <div>
-            <div className="text-sm font-medium">Trade-offs</div>
-            <BulletList items={featured?.Cons || []} pick={featured} isCon />
+            {/* Title */}
+            <div className="text-2xl md:text-3xl font-semibold">
+              {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+            </div>
+
+            {/* Price line (EUR/retailer) just under title */}
+            {featured?.LiveOffer ? (
+              <div className="mt-1 text-sm text-slate-600">
+                <PriceLine offer={featured.LiveOffer} />
+              </div>
+            ) : null}
+
+            <div className="text-sm text-slate-500 mt-1">
+              {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+            </div>
+            <div className="text-sm text-slate-500">
+              {featured?.DisplayInches ? `€{Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+              {featured?.Battery_mAh ? `€{featured.Battery_mAh} mAh` : "—"} •{" "}
+              {featured?.RAM_GB ? `€{featured.RAM_GB} GB RAM` : "—"} •{" "}
+              {featured?.Storage_GB ? `€{featured.Storage_GB} GB` : "—"}
+            </div>
+
+            {/* Blurb */}
+            {blurb ? (
+              <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                {blurb}
+              </div>
+            ) : null}
+
+            {(featured?.Pros?.length || featured?.Cons?.length) ? (
+              <div className="grid md:grid-cols-2 gap-6 mt-5">
+                <div>
+                  <div className="text-sm font-medium">Why it fits</div>
+                  <BulletList items={featured?.Pros || []} pick={featured} />
+                </div>
+                <div>
+                  <div className="text-sm font-medium">Trade-offs</div>
+                  <BulletList items={featured?.Cons || []} pick={featured} isCon />
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
-      ) : null}
-    </div>
-  </div>
-</div>
+      </div>
 
-      {/* Runner-ups (smaller, lighter) */}
+      {/* Runner-ups */}
       {rest.length > 0 && (
         <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
           {rest.map((p, idx) => (
@@ -905,37 +936,41 @@ function ResultsView({ picks, blurb }) {
                 localSrc={p?.ImageLocal}
                 remoteSrc={p?.ImageURL}
                 brandLogo={p?.BrandLogo}
-                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
+                alt={`€{p?.Brand ?? ""} €{p?.Model ?? ""}`}
               />
 
-              <div className="mt-3 flex items-baseline justify-between">
+              <div className="mt-3">
                 <div className="text-lg font-semibold">
                   {(p?.Brand ?? "")} {(p?.Model ?? "")}
                 </div>
-                <div className="text-lg">
-                  {p?.PriceUSD ? `$${Math.round(p.PriceUSD)}` : "—"}
-                </div>
-              </div>
 
-              <div className="text-xs text-slate-500">
-                {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
-              </div>
-              <div className="text-xs text-slate-500">
-                {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
-                {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
-                {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
+                {/* Price line for runner-ups */}
+                {p?.LiveOffer ? (
+                  <div className="mt-0.5 text-xs text-slate-600">
+                    <PriceLine offer={p.LiveOffer} />
+                  </div>
+                ) : null}
+
+                <div className="text-xs text-slate-500">
+                  {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {p?.DisplayInches ? `€{Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                  {p?.Battery_mAh ? `€{p.Battery_mAh} mAh` : "—"} •{" "}
+                  {p?.RAM_GB ? `€{p.RAM_GB} GB RAM` : "—"} •{" "}
+                  {p?.Storage_GB ? `€{p.Storage_GB} GB` : "—"}
+                </div>
               </div>
 
               {(p?.Pros?.length || p?.Cons?.length) ? (
                 <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
                   <div>
                     <div className="text-sm font-medium">Pros</div>
-<BulletList items={p?.Pros || []} pick={p} />
+                    <BulletList items={p?.Pros || []} pick={p} />
                   </div>
                   <div>
                     <div className="text-sm font-medium">Cons</div>
-<BulletList items={p?.Cons || []} pick={p} isCon />
+                    <BulletList items={p?.Cons || []} pick={p} isCon />
                   </div>
                 </div>
               ) : null}
@@ -946,6 +981,7 @@ function ResultsView({ picks, blurb }) {
     </div>
   );
 }
+
 
 
 /* ---- overlay ---- */

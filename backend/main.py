@@ -939,7 +939,7 @@ def _clean_pick(p: dict) -> dict:
         q["LiveOffer"] = {
             "retailer": str(offer.get("retailer") or ""),
             "price": _json_safe_num(offer.get("price"), float),
-            "currency": str(offer.get("currency") or "EUR"),
+            "currency": str(offer.get("currency") or "EUR"),   # <— EUR default
             "url": str(offer.get("url") or ""),
             "in_stock": bool(offer.get("in_stock")),
         }
