@@ -14,6 +14,31 @@ AMZ_SECRET_KEY   = os.getenv("AMZ_SECRET_KEY", "")
 
 EUR_PER_SEK = float(os.getenv("FX_EUR_PER_SEK", "0.089"))  # tweak in env if you like
 
+# offers/amazon.py
+import os, logging
+logger = logging.getLogger("offers")
+
+def amazon_enabled():
+    return all([
+        os.getenv("AMAZON_PARTNER_TAG"),
+        os.getenv("AMAZON_ACCESS_KEY"),
+        os.getenv("AMAZON_SECRET_KEY"),
+        os.getenv("AMAZON_HOST"),     # e.g. webservices.amazon.co.uk or .de
+        os.getenv("AMAZON_REGION"),   # e.g. eu-west-1
+    ])
+
+def find_amazon_offer(query):
+    if not amazon_enabled():
+        logger.info("[amazon] disabled; missing credentials")
+        return None
+    try:
+        # ... your PA-API request using the configured host/region/keys
+        pass
+    except Exception as e:
+        logger.warning(f"[amazon] request failed: {e}")
+        return None
+
+
 def _sek_to_eur(v):
     try:
         return round(float(v) * EUR_PER_SEK, 2)

@@ -93,11 +93,45 @@ function retailerLabel(id) {
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
-/* format 1234.5 -> "1 234.50" (thin space for readability) */
+/* format 1234.5 -> "1 234.50" (locale-friendly) */
 function formatMoney(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return String(v ?? "");
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ---------- Amazon affiliate helpers (no PA-API needed) ---------- */
+const MARKET_DOMAINS = {
+  se: "https://www.amazon.se",
+  de: "https://www.amazon.de",
+  uk: "https://www.amazon.co.uk",
+  us: "https://www.amazon.com",
+};
+
+/**
+ * Reads affiliate setup from env:
+ *   VITE_AMZ_MARKET      -> se | de | uk | us  (default: se)
+ *   VITE_AMZ_TAG         -> fallback tag (e.g., findyourdevic-21)
+ *   VITE_AMZ_TAG_SE/DE/UK/US -> market-specific overrides (optional)
+ */
+function readAffiliateConfig() {
+  const market = (import.meta.env?.VITE_AMZ_MARKET || "se").toLowerCase();
+  const domain = MARKET_DOMAINS[market] || MARKET_DOMAINS.se;
+
+  const key = "VITE_AMZ_TAG_" + market.toUpperCase();
+  const tag = (import.meta.env?.[key] || import.meta.env?.VITE_AMZ_TAG || "").trim();
+
+  return { market, domain, tag };
+}
+
+/** Build a search URL like:
+ *   https://www.amazon.se/s?k=Apple+iPhone+16+Pro+Max&tag=findyourdevic-21
+ */
+function amazonAffiliateSearchUrl(pick) {
+  const { domain, tag } = readAffiliateConfig();
+  const q = [pick?.Brand, pick?.Model].filter(Boolean).join(" ");
+  const base = `${domain}/s?k=${encodeURIComponent(q)}`;
+  return tag ? `${base}&tag=${encodeURIComponent(tag)}` : base;
 }
 
 
@@ -827,41 +861,47 @@ function ResultsView({ picks, blurb }) {
 
   const [featured, ...rest] = picks;
 
-  /* small reusable price line */
-  const PriceLine = ({ offer }) => {
-    if (!offer || !offer.price) return null;
-    const cur = offer.currency || "EUR";
-    const body = (
-      <>
-        From {cur} {formatMoney(offer.price)}{" "}
-        {offer.retailer === "amazon" ? (
-          <span>on Amazon</span>
-        ) : (
-          <span>at MSRP</span>
-        )}
-        {offer.in_stock ? "" : " (out of stock)"}
-      </>
-    );
-    return offer.url && offer.retailer === "amazon" ? (
-      <a
-        href={offer.url}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-block underline hover:no-underline"
-        title="Open offer in a new tab"
-      >
-        {body}
-      </a>
-    ) : (
-      <span className="inline-block">{body}</span>
+  const PricePill = ({ pick }) => {
+    const msrp = pick?.MSRP; // expected shape: { price: number, currency: "EUR" | "SEK" | ... }
+    const live = pick?.LiveOffer; // optional: { price, currency, retailer, url, in_stock }
+
+    const price = (msrp && Number(msrp.price)) || (live && Number(live.price));
+    const currency = (msrp && msrp.currency) || (live && live.currency) || "EUR";
+    if (!Number.isFinite(price)) return null;
+
+    const label = msrp ? "MSRP" : (live?.retailer === "amazon" ? "Amazon" : "Price");
+    const affUrl = amazonAffiliateSearchUrl(pick);
+
+    return (
+      <div className="mt-1 inline-flex items-center gap-2 rounded-2xl bg-indigo-600/10 text-indigo-900 px-3 py-1 text-sm">
+        <span className="font-semibold">{currency} {formatMoney(price)}</span>
+        <span className="opacity-70">• {label}</span>
+        <a
+          href={affUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="ml-1 underline hover:no-underline"
+          title="Open Amazon in a new tab"
+        >
+          Find on Amazon
+        </a>
+      </div>
     );
   };
 
+  const SpecsLine = ({ p }) => (
+    <div className="text-sm text-slate-500">
+      {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+      {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
+      {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
+      {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
+    </div>
+  );
+
   return (
     <div className="space-y-8">
-      {/* HERO (centered, dominant) */}
+      {/* HERO */}
       <div className="max-w-5xl mx-auto bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 relative">
-        {/* DXOMARK rank badge — bottom-right */}
         {"DxOMarkCameraRank" in (featured || {}) && (
           <div
             className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
@@ -883,29 +923,18 @@ function ResultsView({ picks, blurb }) {
           </div>
 
           <div>
-            {/* Title */}
             <div className="text-2xl md:text-3xl font-semibold">
               {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
             </div>
 
-            {/* Price line (EUR/retailer) just under title */}
-            {featured?.LiveOffer ? (
-              <div className="mt-1 text-sm text-slate-600">
-                <PriceLine offer={featured.LiveOffer} />
-              </div>
-            ) : null}
+            {/* --> Price pill + affiliate link */}
+            <PricePill pick={featured} />
 
             <div className="text-sm text-slate-500 mt-1">
               {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
             </div>
-            <div className="text-sm text-slate-500">
-              {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-              {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-              {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-              {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-            </div>
+            <SpecsLine p={featured} />
 
-            {/* Blurb */}
             {blurb ? (
               <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
                 {blurb}
@@ -945,12 +974,10 @@ function ResultsView({ picks, blurb }) {
                   {(p?.Brand ?? "")} {(p?.Model ?? "")}
                 </div>
 
-                {/* Price line for runner-ups */}
-                {p?.LiveOffer ? (
-                  <div className="mt-0.5 text-xs text-slate-600">
-                    <PriceLine offer={p.LiveOffer} />
-                  </div>
-                ) : null}
+                {/* small price line + Amazon link */}
+                <div className="mt-0.5 text-xs text-slate-600">
+                  <PricePill pick={p} />
+                </div>
 
                 <div className="text-xs text-slate-500">
                   {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
@@ -959,7 +986,7 @@ function ResultsView({ picks, blurb }) {
                   {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
                   {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
                   {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
-                  {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
+                  {p?.Storage_GB ? `${p?.Storage_GB} GB` : "—"}
                 </div>
               </div>
 
