@@ -1,5 +1,7 @@
 from __future__ import annotations
 from amazon_live import fetch_amazon_offer
+from dxomark_live import cached_dxomark_rank  # make sure this exists
+
 import traceback
 from gsma_scraper import fetch_specs_live, ScrapeError
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
@@ -17,7 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
-
+EUR_PER_USD = float(os.getenv("FX_EUR_PER_USD", "0.93"))
 from reddit_live import reddit_search_pros_cons  # add at top
 from dxomark_live import fetch_dxomark_camera_rank
 USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"
@@ -119,6 +121,11 @@ def _safe_csv_path():
     # fallback
     return LEGACY_PATH
 
+def _usd_to_eur(v):
+    try:
+        return round(float(v) * EUR_PER_USD, 2) if v is not None else None
+    except Exception:
+        return None
 CSV_PATH = _safe_csv_path()
 
 
@@ -1282,6 +1289,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
       - live GSMA specs (no disk)
       - YouTube + Reddit pros/cons (deduped, intent-focused)
       - DXOMARK camera RANK for the FIRST pick only
+      - Amazon offer (EUR preferred) with MSRP fallback
     """
     picks: list[dict] = []
     if d is None or d.empty:
@@ -1315,9 +1323,16 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     for idx, (_, row) in enumerate(ranked.iterrows()):
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
+        if not brand or not model:
+            print("[build] skip row with missing brand/model:", row.to_dict())
+            continue
 
         # --- LIVE GSMA MERGE ---
-        merged = _merge_live_specs(row, brand, model)
+        try:
+            merged = _merge_live_specs(row, brand, model)
+        except Exception as e:
+            print("[merge_live_specs] failed:", e)
+            merged = row  # fall back to original
 
         # --- slug + images ---
         slug = row.get("Slug")
@@ -1419,38 +1434,26 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[dxo] fetch failed:", e)
             dxo_done = True  # avoid retrying on later items
 
-EUR_PER_USD = float(os.getenv("FX_EUR_PER_USD", "0.93"))  # tweak via env if you want
-
-def _usd_to_eur(v):
-    try:
-        return round(float(v) * EUR_PER_USD, 2) if v is not None else None
-    except Exception:
-        return None
-
- # --- optional live offer (Amazon) + MSRP fallback (EUR) ---
+        # --- optional live offer (Amazon) + MSRP fallback (EUR) ---
         try:
-            # IMPORTANT: pass (brand, model), NOT slug
             amz = fetch_amazon_offer(brand, model)  # None or {price, currency, url, ...}
 
             if amz:
-                # Normalize to what the frontend already renders
                 item["LiveOffer"] = {
                     "retailer": "amazon",
                     "url": amz.get("url"),
-                    "price": amz.get("price"),                   # float
+                    "price": amz.get("price"),
                     "currency": amz.get("currency", "EUR"),
                     "in_stock": True,
                 }
             else:
-                # MSRP fallback: prefer EUR if present in your CSV, else convert USD
                 msrp_eur = fnum(row.get("PriceEUR"), float)
                 if not msrp_eur:
                     msrp_eur = _usd_to_eur(fnum(row.get("PriceUSD"), float))
-
                 if msrp_eur:
                     item["LiveOffer"] = {
                         "retailer": "msrp",
-                        "url": None,                              # no link for MSRP
+                        "url": None,
                         "price": msrp_eur,
                         "currency": "EUR",
                         "in_stock": True,
@@ -1464,10 +1467,10 @@ def _usd_to_eur(v):
         except Exception as _e:
             print("[explain] failed:", _e)
 
+        # append!
         picks.append(item)
 
     return picks
-
 
 def _enrich_bullets_llm(intent: dict, brand: str, model: str,
                         pros: list[str], cons: list[str]) -> tuple[list[str], list[str]]:
