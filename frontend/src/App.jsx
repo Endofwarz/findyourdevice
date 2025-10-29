@@ -54,7 +54,7 @@ async function j(url, init) {
     const r = await fetch(url, init);
     const text = await r.text(); // always read text first
     if (!r.ok) {
-      const msg = text?.slice(0, 800) || `€{r.status} €{r.statusText}`;
+      const msg = text?.slice(0, 800) || `${r.status} ${r.statusText}`;
       throw new Error(msg);
     }
     // try parse JSON, but don’t crash the UI if it isn’t JSON
@@ -67,17 +67,17 @@ async function j(url, init) {
 }
 
 async function startChat() {
-  return j(`€{API}/chat/start`, { method: "POST" });
+  return j(`${API}/chat/start`, { method: "POST" });
 }
 async function msgChat(session_id, message) {
-  return j(`€{API}/chat/message`, {
+  return j(`${API}/chat/message`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id, message }),
   });
 }
 async function patchChat(session_id, patch) {
-  return j(`€{API}/chat/patch`, {
+  return j(`${API}/chat/patch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id, patch }),
@@ -461,7 +461,7 @@ function CategoryCard({ title, onClick, disabled }) {
     <button
       onClick={!disabled ? onClick : undefined}
       className={`relative w-full max-w-xs h-36 rounded-3xl border shadow-sm flex flex-col items-center justify-center text-xl font-medium transition
-        €{disabled ? "opacity-60 cursor-not-allowed" : "bg-white hover:shadow-md active:scale-[0.99] border-indigo-200"}`}
+        ${disabled ? "opacity-60 cursor-not-allowed" : "bg-white hover:shadow-md active:scale-[0.99] border-indigo-200"}`}
     >
       <Icon className="h-9 w-9 text-indigo-600 mb-2" />
       <span className="text-slate-800">{title}</span>
@@ -513,7 +513,7 @@ function ModeCard({ variant = "simple", onClick, disabled = false }) {
       onClick={!disabled ? onClick : undefined}
  className={`w-full max-w-[420px] h-full min-h-[220px] rounded-3xl border p-5 text-left transition
                   flex flex-col justify-between
-        €{disabled ? "opacity-40 cursor-not-allowed" : "bg-white hover:shadow-md border-indigo-200"}`}
+        ${disabled ? "opacity-40 cursor-not-allowed" : "bg-white hover:shadow-md border-indigo-200"}`}
     >
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
@@ -610,7 +610,7 @@ function WizardStep({ stepIndex, total, stepDef, intent, onPatch, onBack, onNext
 
           <div className="mt-10 flex items-center justify-between">
             <button
-              className={`px-5 py-3 rounded-2xl border text-base md:text-lg €{stepIndex === 0 ? "opacity-40 cursor-not-allowed" : ""}`}
+              className={`px-5 py-3 rounded-2xl border text-base md:text-lg ${stepIndex === 0 ? "opacity-40 cursor-not-allowed" : ""}`}
               onClick={onBack} disabled={stepIndex === 0}
             >
               ← Back
@@ -643,7 +643,7 @@ if (type === "budget") {
         onChange={(e) => onPatch({ budget: Number(e.target.value) })}
         className="w-full h-3 accent-indigo-600"
       />
-      <div className="mt-3 text-3xl font-semibold">€{Math.round(v)}</div>
+      <div className="mt-3 text-3xl font-semibold">${Math.round(v)}</div>
     </div>
   );
 }
@@ -691,13 +691,13 @@ if (type === "budget") {
   }
 
   if (type === "ram") {
-    const v = Number.isFinite(intent.min_ram) ? `€{intent.min_ram} GB` : "No preference";
+    const v = Number.isFinite(intent.min_ram) ? `${intent.min_ram} GB` : "No preference";
     const choose = (x) => onPatch({ min_ram: x === "No preference" ? null : Number(String(x).replace(/\D+/g,"")) });
     return <SegmentedBig options={["No preference", "6 GB", "8 GB", "12 GB"]} value={v} onChange={choose} />;
   }
 
   if (type === "storage") {
-    const v = Number.isFinite(intent.min_storage) ? `€{intent.min_storage} GB` : "No preference";
+    const v = Number.isFinite(intent.min_storage) ? `${intent.min_storage} GB` : "No preference";
     const choose = (x) => onPatch({ min_storage: x === "No preference" ? null : Number(String(x).replace(/\D+/g,"")) });
     return <SegmentedBig options={["No preference", "128 GB", "256 GB", "512 GB"]} value={v} onChange={choose} />;
   }
@@ -725,7 +725,7 @@ function SegmentedBig({ options, value, onChange }) {
           type="button"
           onClick={() => choose(opt)}
           className={`px-6 py-4 rounded-2xl border text-xl transition
-            €{local === opt ? "bg-indigo-600 text-white border-indigo-600 shadow"
+            ${local === opt ? "bg-indigo-600 text-white border-indigo-600 shadow"
                             : "bg-white hover:bg-indigo-50 border-indigo-200"}`}
         >
           {opt}
@@ -748,7 +748,7 @@ function ChipsBig({ options, selected = [], onChange }) {
         <button
           key={opt} type="button" onClick={() => toggle(opt)}
           className={`px-6 py-4 rounded-2xl border text-xl transition
-            €{local.has(opt) ? "bg-indigo-600 text-white border-indigo-600 shadow"
+            ${local.has(opt) ? "bg-indigo-600 text-white border-indigo-600 shadow"
                              : "bg-white hover:bg-indigo-50 border-indigo-200"}`}
         >
           {opt}
@@ -792,7 +792,7 @@ function PhoneImage({ localSrc, remoteSrc, brandLogo, alt }) {
 
   return (
     <div className={`w-full h-56 rounded-2xl flex items-center justify-center p-4
-      €{isLogo ? "bg-white border-2 border-indigo-100" : "bg-slate-100"}`}>
+      ${isLogo ? "bg-white border-2 border-indigo-100" : "bg-slate-100"}`}>
       {src ? (
         <img
           src={src}
@@ -878,7 +878,7 @@ function ResultsView({ picks, blurb }) {
               localSrc={featured?.ImageLocal}
               remoteSrc={featured?.ImageURL}
               brandLogo={featured?.BrandLogo}
-              alt={`€{featured?.Brand ?? ""} €{featured?.Model ?? ""}`}
+              alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
             />
           </div>
 
@@ -899,10 +899,10 @@ function ResultsView({ picks, blurb }) {
               {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
             </div>
             <div className="text-sm text-slate-500">
-              {featured?.DisplayInches ? `€{Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-              {featured?.Battery_mAh ? `€{featured.Battery_mAh} mAh` : "—"} •{" "}
-              {featured?.RAM_GB ? `€{featured.RAM_GB} GB RAM` : "—"} •{" "}
-              {featured?.Storage_GB ? `€{featured.Storage_GB} GB` : "—"}
+              {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+              {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+              {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+              {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
             </div>
 
             {/* Blurb */}
@@ -937,7 +937,7 @@ function ResultsView({ picks, blurb }) {
                 localSrc={p?.ImageLocal}
                 remoteSrc={p?.ImageURL}
                 brandLogo={p?.BrandLogo}
-                alt={`€{p?.Brand ?? ""} €{p?.Model ?? ""}`}
+                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
               />
 
               <div className="mt-3">
@@ -956,10 +956,10 @@ function ResultsView({ picks, blurb }) {
                   {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
                 </div>
                 <div className="text-xs text-slate-500">
-                  {p?.DisplayInches ? `€{Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                  {p?.Battery_mAh ? `€{p.Battery_mAh} mAh` : "—"} •{" "}
-                  {p?.RAM_GB ? `€{p.RAM_GB} GB RAM` : "—"} •{" "}
-                  {p?.Storage_GB ? `€{p.Storage_GB} GB` : "—"}
+                  {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                  {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
+                  {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
+                  {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
                 </div>
               </div>
 
