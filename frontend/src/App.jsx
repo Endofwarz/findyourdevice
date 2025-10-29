@@ -15,27 +15,37 @@ const theme = {
 
 /* ------------------------- API base ------------------------- */
 /**
- * Resolve the API base URL:
- * - If VITE_API_BASE is set (e.g. in Vercel env), use it.
- * - Else, if we’re on Vercel (or any https domain), fall back to an https API you host.
- * - Else (local dev), use the local FastAPI.
+ * We require VITE_API_BASE in production (Vercel).
+ * Example value (no trailing slash):
+ *   https://your-backend.onrender.com
  */
 function resolveApiBase() {
-  const env = import.meta.env?.VITE_API_BASE?.trim();
-  if (env) return env;
+  const env = (import.meta.env?.VITE_API_BASE || "").trim();
+  if (env) return env.replace(/\/+$/, ""); // strip trailing slash
 
-  const origin = window.location.origin;
-  const onVercel = /\.vercel\.app$/i.test(location.hostname);
-  const isHttps = location.protocol === "https:";
+  // Local dev fallback
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return "http://127.0.0.1:8000";
+  }
 
-  // 👉 EDIT THIS to your deployed API base
-  const PROD_API = "https://YOUR-FASTAPI-DOMAIN.example.com"; // must be HTTPS
-
-  if (onVercel || isHttps) return PROD_API;
-  return "http://127.0.0.1:8000"; // local dev
+  // If we got here in production, the env var isn't set.
+  // Throw a clear error so the UI shows a helpful message.
+  throw new Error(
+    "Missing VITE_API_BASE. Set it in Vercel → Settings → Environment Variables to your FastAPI base URL (https)."
+  );
 }
 
-const API = resolveApiBase();
+let API;
+try {
+  API = resolveApiBase();
+  console.log("[API] Using base:", API);
+} catch (e) {
+  // surface a readable error once on load
+  alert(e.message || String(e));
+  // make API something harmless so later fetches don't try same-origin
+  API = "http://127.0.0.1:8000";
+}
 
 
 /* ------------------------- tiny fetch helpers ------------------------- */
