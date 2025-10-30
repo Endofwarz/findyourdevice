@@ -1,7 +1,7 @@
 from __future__ import annotations
 from amazon_live import fetch_amazon_offer
 from dxomark_live import cached_dxomark_rank  # make sure this exists
-
+from gsma_scraper import fetch_specs_live, fetch_price_live, fetch_gallery_urls
 import traceback
 from gsma_scraper import fetch_specs_live, ScrapeError
 from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED

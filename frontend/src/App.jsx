@@ -1142,7 +1142,9 @@ function ResultsView({ picks, blurb }) {
 
   const makeMain = (idxInRest) => {
     // Find absolute index of the chosen item
-    const absoluteIdx = items.findIndex((_, i) => i !== featuredIdx && (i > featuredIdx ? i - 1 : i) === idxInRest);
+    const absoluteIdx = items.findIndex(
+      (_, i) => i !== featuredIdx && (i > featuredIdx ? i - 1 : i) === idxInRest
+    );
     if (absoluteIdx < 0) return;
 
     // Swap into position 0 with a nice layout animation
@@ -1157,9 +1159,9 @@ function ResultsView({ picks, blurb }) {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Small subcomponent: quick marketplace strip (used ONLY on featured back face)
+  // Quick marketplace strip (used ONLY on featured back face)
   const MarketStrip = ({ brand, model }) => {
-    const links = buildMarketplaceLinks(brand, model); // expected to return [{id,label,logo,url}]
+    const links = buildMarketplaceLinks(brand, model); // [{id,label,logo,url}]
     return (
       <div className="mt-3 grid sm:grid-cols-3 gap-3">
         {links.map((m) => (
@@ -1170,9 +1172,8 @@ function ResultsView({ picks, blurb }) {
             rel="noreferrer"
             className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 hover:shadow"
           >
-            {/* use stable public assets like /vendors/amazon.svg, /vendors/prisjakt.svg, /vendors/idealo.svg */}
             <img
-              src={m.logo}
+              src={m.logo}               // e.g. /vendors/amazon.svg, /vendors/prisjakt.svg, /vendors/idealo.svg
               alt={m.label}
               className="h-5 w-5 object-contain opacity-80"
               loading="lazy"
@@ -1185,17 +1186,6 @@ function ResultsView({ picks, blurb }) {
   };
 
   const heroBlurb = (featured?.Blurb || blurb || "").trim();
-<Gallery urls={featured?.Gallery || []} />
-{/* MSRP badge */}
-{(featured?.PriceEUR > 0) && (
-  <div
-    className="absolute right-4 top-4 rounded-2xl px-3 py-1 text-sm font-semibold ring-1 ring-emerald-200 bg-emerald-50 text-emerald-800"
-    title="Approx. MSRP / launch price"
-  >
-    €{Number(featured.PriceEUR).toFixed(2)}
-  </div>
-)}
-
 
   return (
     <div className="space-y-8">
@@ -1215,7 +1205,17 @@ function ResultsView({ picks, blurb }) {
               className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200"
               style={{ backfaceVisibility: "hidden" }}
             >
-              {/* DXOMARK badge — only on featured */}
+              {/* MSRP badge (top-right) */}
+              {Number.isFinite(featured?.PriceEUR) && featured.PriceEUR > 0 && (
+                <div
+                  className="absolute right-4 top-4 rounded-2xl px-3 py-1 text-sm font-semibold ring-1 ring-emerald-200 bg-emerald-50 text-emerald-800"
+                  title="Approx. MSRP / launch price"
+                >
+                  €{Number(featured.PriceEUR).toFixed(0)}
+                </div>
+              )}
+
+              {/* DXOMARK badge — only on featured (bottom-right) */}
               {"DxOMarkCameraRank" in (featured || {}) && (
                 <div
                   className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
@@ -1234,6 +1234,10 @@ function ResultsView({ picks, blurb }) {
                     brandLogo={featured?.BrandLogo}
                     alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
                   />
+                  {/* Gallery thumbnails (if provided by backend) */}
+                  {Array.isArray(featured?.Gallery) && featured.Gallery.length > 0 && (
+                    <Gallery urls={featured.Gallery} />
+                  )}
                 </div>
 
                 <div>
@@ -1321,7 +1325,11 @@ function ResultsView({ picks, blurb }) {
       {rest.length > 0 && (
         <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
           {rest.map((p, idx) => (
-            <motion.div layout key={`${p?.Brand}-${p?.Model}-${idx}`} className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200">
+            <motion.div
+              layout
+              key={`${p?.Brand}-${p?.Model}-${idx}`}
+              className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200"
+            >
               {/* Label */}
               <div className="mb-2">
                 <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">
@@ -1351,6 +1359,9 @@ function ResultsView({ picks, blurb }) {
                   {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
                   {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
                 </div>
+                {Number.isFinite(p?.PriceEUR) && p.PriceEUR > 0 && (
+                  <div className="text-xs text-slate-500 mt-1">≈ €{Number(p.PriceEUR).toFixed(0)}</div>
+                )}
 
                 {/* No links / blurb / DXOMARK on alternatives */}
 
