@@ -137,8 +137,8 @@ function amazonAffiliateSearchUrl(pick) {
 /* ---- Marketplaces: logo + search links ---- */
 const LOGOS = {
   amazon: "https://unpkg.com/simple-icons@v13/icons/amazon.svg",
-  prisjakt: "https://upload.wikimedia.org/wikipedia/commons/0/01/Prisjakt_logo.svg",
-  idealo: "https://upload.wikimedia.org/wikipedia/commons/4/4f/Idealo_logo_2019.svg",
+  prisjakt: "https://cdn.filestackcontent.com/auto_image/46NYHSdSXyrgcK0I8aws",
+  idealo: "https://upload.wikimedia.org/wikipedia/commons/5/57/Idealo_logo.jpg",
 };
 
 function brandModelQuery(brand, model) {
@@ -1060,9 +1060,7 @@ function ResultsView({ picks, blurb }) {
   // Local copy so we can animate reorder
   const [items, setItems] = React.useState(picks);
   const [featuredIdx, setFeaturedIdx] = React.useState(0);
-
-  // 1) flip state for the featured card only
-  const [flipped, setFlipped] = React.useState(false);
+  const [flipped, setFlipped] = React.useState(false); // front/back of FEATURED
 
   // Reset when new results arrive
   React.useEffect(() => {
@@ -1087,17 +1085,13 @@ function ResultsView({ picks, blurb }) {
       return next;
     });
     setFeaturedIdx(0);
-
-    // reset flip on promote
-    setFlipped(false);
-
-    // scroll back to top (nice polish)
+    setFlipped(false); // reset flip when changing featured
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Small subcomponent: quick marketplace strip (used ONLY on featured back)
+  // Small subcomponent: quick marketplace strip (used ONLY on featured back face)
   const MarketStrip = ({ brand, model }) => {
-    const links = buildMarketplaceLinks(brand, model);
+    const links = buildMarketplaceLinks(brand, model); // expected to return [{id,label,logo,url}]
     return (
       <div className="mt-3 grid sm:grid-cols-3 gap-3">
         {links.map((m) => (
@@ -1108,6 +1102,7 @@ function ResultsView({ picks, blurb }) {
             rel="noreferrer"
             className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 hover:shadow"
           >
+            {/* use stable public assets like /vendors/amazon.svg, /vendors/prisjakt.svg, /vendors/idealo.svg */}
             <img
               src={m.logo}
               alt={m.label}
@@ -1121,73 +1116,113 @@ function ResultsView({ picks, blurb }) {
     );
   };
 
-  // 2) blurb must follow the featured pick
   const heroBlurb = (featured?.Blurb || blurb || "").trim();
 
   return (
     <div className="space-y-8">
-      {/* FEATURED CARD (flip container) */}
+      {/* FEATURED CARD (flippable) */}
       <motion.div layout className="max-w-5xl mx-auto">
-  <div className="relative [perspective:1200px]">
-    {/* FLIP WRAPPER */}
-    <div
-      className={`relative transition-transform duration-500 will-change-[transform] [transform-style:preserve-3d] ${
-        flipped ? "[transform:rotateY(180deg)]" : ""
-      }`}
-    >
-      {/* FRONT FACE */}
-      <div className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 [backface-visibility:hidden]">
-        {/* DXOMARK badge — only on featured front */}
-        {"DxOMarkCameraRank" in (featured || {}) && (
+        <div className="relative" style={{ perspective: 1200 }}>
           <div
-            className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-            style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-            title="DXOMARK Camera ranking"
+            className="relative transition-transform duration-500"
+            style={{
+              transform: flipped ? "rotateY(180deg)" : "none",
+              transformStyle: "preserve-3d",
+              willChange: "transform",
+            }}
           >
-            DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
-          </div>
-        )}
+            {/* FRONT FACE */}
+            <div
+              className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200"
+              style={{ backfaceVisibility: "hidden" }}
+            >
+              {/* DXOMARK badge — only on featured */}
+              {"DxOMarkCameraRank" in (featured || {}) && (
+                <div
+                  className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+                  style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+                  title="DXOMARK Camera ranking"
+                >
+                  DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
+                </div>
+              )}
 
-        {/* your front content (image, title, specs, blurb, pros/cons)… */}
-        {/* keep your existing front JSX here, including the button that sets setFlipped(true) */}
-      </div>
+              <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+                <div className="mx-auto w-full">
+                  <PhoneImage
+                    localSrc={featured?.ImageLocal}
+                    remoteSrc={featured?.ImageURL}
+                    brandLogo={featured?.BrandLogo}
+                    alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
+                  />
+                </div>
 
-      {/* BACK FACE */}
-      <div className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200 [transform:rotateY(180deg)] [backface-visibility:hidden]">
-        <div className="flex items-start justify-between">
-          <div className="text-lg md:text-xl font-semibold">
-            {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
-          </div>
-          <button
-            type="button"
-            onClick={() => setFlipped(false)}
-            className="rounded-xl px-3 py-1 text-sm border"
-          >
-            Back
-          </button>
-        </div>
+                <div>
+                  {/* Title row */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-2xl md:text-3xl font-semibold">
+                      {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+                    </div>
 
-        <div className="mt-4 text-xs text-slate-500">Quick links (opens in new tab)</div>
-        <MarketStrip brand={featured?.Brand} model={featured?.Model} />
-        <div className="text-[11px] text-slate-400 mt-3">
-          We’re not tracking prices yet — these are search links for your region.
-        </div>
-      </div>
-    </div>
-  </div>
-</motion.div>
+                    {/* Only featured shows "Where to buy" (flips card) */}
+                    <button
+                      type="button"
+                      onClick={() => setFlipped(true)}
+                      className="shrink-0 rounded-xl px-3 py-1 text-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                      title="Show quick marketplace links"
+                    >
+                      Where to buy
+                    </button>
+                  </div>
 
+                  {/* Subline with quick specs */}
+                  <div className="text-sm text-slate-500 mt-1">
+                    {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                    {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+                    {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+                    {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
+                  </div>
 
-            {/* BACK FACE (links) */}
-            <div className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200 [transform:rotateY(180deg)] backface-hidden">
-              <div className="flex items-start justify-between">
+                  {/* Featured blurb — computed for all picks but ONLY visible on main */}
+                  {heroBlurb && (
+                    <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                      {heroBlurb}
+                    </div>
+                  )}
+
+                  {(featured?.Pros?.length || featured?.Cons?.length) ? (
+                    <div className="grid md:grid-cols-2 gap-6 mt-5">
+                      <div>
+                        <div className="text-sm font-medium">Why it fits</div>
+                        <BulletList items={featured?.Pros || []} pick={featured} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium">Trade-offs</div>
+                        <BulletList items={featured?.Cons || []} pick={featured} isCon />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            {/* BACK FACE (quick links) */}
+            <div
+              className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200"
+              style={{ transform: "rotateY(180deg)", backfaceVisibility: "hidden" }}
+            >
+              <div className="flex items-start justify-between gap-3">
                 <div className="text-lg md:text-xl font-semibold">
                   {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
                 </div>
                 <button
                   type="button"
                   onClick={() => setFlipped(false)}
-                  className="rounded-xl px-3 py-1 text-sm border"
+                  className="rounded-xl px-3 py-1 text-sm border border-slate-200 hover:bg-slate-50"
+                  title="Back to details"
                 >
                   Back
                 </button>
@@ -1238,7 +1273,7 @@ function ResultsView({ picks, blurb }) {
                   {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
                 </div>
 
-                {/* No “Where to buy”, blurb or DXOMARK on alternatives */}
+                {/* No links / blurb / DXOMARK on alternatives */}
 
                 {(p?.Pros?.length || p?.Cons?.length) ? (
                   <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
