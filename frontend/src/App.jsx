@@ -1128,86 +1128,55 @@ function ResultsView({ picks, blurb }) {
     <div className="space-y-8">
       {/* FEATURED CARD (flip container) */}
       <motion.div layout className="max-w-5xl mx-auto">
-        <div className="relative [perspective:1200px]">
+  <div className="relative [perspective:1200px]">
+    {/* FLIP WRAPPER */}
+    <div
+      className={`relative transition-transform duration-500 will-change-[transform] [transform-style:preserve-3d] ${
+        flipped ? "[transform:rotateY(180deg)]" : ""
+      }`}
+    >
+      {/* FRONT FACE */}
+      <div className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 [backface-visibility:hidden]">
+        {/* DXOMARK badge — only on featured front */}
+        {"DxOMarkCameraRank" in (featured || {}) && (
           <div
-            className={`relative transition-transform duration-500 [transform-style:preserve-3d] ${
-              flipped ? "[transform:rotateY(180deg)]" : ""
-            }`}
+            className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+            style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+            title="DXOMARK Camera ranking"
           >
-            {/* FRONT FACE */}
-            <div className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 backface-hidden">
-              {/* DXOMARK badge — only on featured front */}
-              {"DxOMarkCameraRank" in (featured || {}) && (
-                <div
-                  className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-                  style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-                  title="DXOMARK Camera ranking"
-                >
-                  DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
-                </div>
-              )}
+            DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
+          </div>
+        )}
 
-              <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-                <div className="mx-auto w-full">
-                  <PhoneImage
-                    localSrc={featured?.ImageLocal}
-                    remoteSrc={featured?.ImageURL}
-                    brandLogo={featured?.BrandLogo}
-                    alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-                  />
-                </div>
+        {/* your front content (image, title, specs, blurb, pros/cons)… */}
+        {/* keep your existing front JSX here, including the button that sets setFlipped(true) */}
+      </div>
 
-                <div>
-                  {/* Title row */}
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="text-2xl md:text-3xl font-semibold">
-                      {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
-                    </div>
+      {/* BACK FACE */}
+      <div className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200 [transform:rotateY(180deg)] [backface-visibility:hidden]">
+        <div className="flex items-start justify-between">
+          <div className="text-lg md:text-xl font-semibold">
+            {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+          </div>
+          <button
+            type="button"
+            onClick={() => setFlipped(false)}
+            className="rounded-xl px-3 py-1 text-sm border"
+          >
+            Back
+          </button>
+        </div>
 
-                    {/* Flip toggle (only on featured) */}
-                    <button
-                      type="button"
-                      onClick={() => setFlipped(true)}
-                      className="shrink-0 rounded-xl px-3 py-1 text-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                      title="Show quick marketplace links"
-                    >
-                      Where to buy
-                    </button>
-                  </div>
+        <div className="mt-4 text-xs text-slate-500">Quick links (opens in new tab)</div>
+        <MarketStrip brand={featured?.Brand} model={featured?.Model} />
+        <div className="text-[11px] text-slate-400 mt-3">
+          We’re not tracking prices yet — these are search links for your region.
+        </div>
+      </div>
+    </div>
+  </div>
+</motion.div>
 
-                  {/* Subline with quick specs */}
-                  <div className="text-sm text-slate-500 mt-1">
-                    {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
-                  </div>
-                  <div className="text-sm text-slate-500">
-                    {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                    {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-                    {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-                    {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-                  </div>
-
-                  {/* Featured blurb — visible only on main */}
-                  {heroBlurb && (
-                    <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
-                      {heroBlurb}
-                    </div>
-                  )}
-
-                  {(featured?.Pros?.length || featured?.Cons?.length) ? (
-                    <div className="grid md:grid-cols-2 gap-6 mt-5">
-                      <div>
-                        <div className="text-sm font-medium">Why it fits</div>
-                        <BulletList items={featured?.Pros || []} pick={featured} />
-                      </div>
-                      <div>
-                        <div className="text-sm font-medium">Trade-offs</div>
-                        <BulletList items={featured?.Cons || []} pick={featured} isCon />
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
 
             {/* BACK FACE (links) */}
             <div className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200 [transform:rotateY(180deg)] backface-hidden">
