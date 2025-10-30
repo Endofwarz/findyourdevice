@@ -550,67 +550,40 @@ function CategoryCard({ title, onClick, disabled }) {
 function Gallery({ urls = [] }) {
   const [open, setOpen] = React.useState(false);
   const [idx, setIdx] = React.useState(0);
-
-  if (!Array.isArray(urls) || urls.length === 0) return null;
-
-  const openAt = (i) => { setIdx(i); setOpen(true); };
-  const prev = () => setIdx((i) => (i - 1 + urls.length) % urls.length);
-  const next = () => setIdx((i) => (i + 1) % urls.length);
+  if (!urls || urls.length === 0) return null;
 
   return (
     <>
-      {/* thumb row */}
-      <div className="mt-3 flex gap-2 overflow-x-auto">
-        {urls.slice(0, 5).map((u, i) => (
-          <button key={u} onClick={() => openAt(i)} className="shrink-0">
-            <img
-              src={u}
-              alt={`Photo ${i+1}`}
-              className="h-16 w-16 object-cover rounded-lg ring-1 ring-slate-200"
-              loading="lazy"
-            />
+      <div className="mt-3 flex gap-2">
+        {urls.slice(0, 4).map((u, i) => (
+          <button
+            key={i}
+            className="rounded-xl overflow-hidden border border-slate-200 hover:shadow"
+            onClick={() => { setIdx(i); setOpen(true); }}
+            title="Open photo"
+          >
+            <img src={u} alt="" className="h-14 w-14 object-cover" loading="lazy" />
           </button>
         ))}
       </div>
 
-      {/* lightbox */}
       {open && (
-        <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4">
-          <div className="relative max-w-3xl w-full">
-            <img
-              src={urls[idx]}
-              alt={`Photo ${idx+1}`}
-              className="w-full max-h-[80vh] object-contain rounded-xl shadow-2xl bg-white"
-            />
-            {/* controls */}
-            <button
-              onClick={() => setOpen(false)}
-              className="absolute top-2 right-2 bg-white/90 hover:bg-white rounded-full px-3 py-1 text-sm shadow"
-            >
-              Close
-            </button>
-            {urls.length > 1 && (
-              <>
-                <button
-                  onClick={prev}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full px-3 py-2 shadow"
-                >
-                  ‹
-                </button>
-                <button
-                  onClick={next}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/90 hover:bg-white rounded-full px-3 py-2 shadow"
-                >
-                  ›
-                </button>
-              </>
-            )}
-          </div>
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setOpen(false)}
+        >
+          <img
+            src={urls[idx]}
+            alt=""
+            className="max-h-[85vh] max-w-[90vw] rounded-2xl shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </>
   );
 }
+
 
 
 function IconBadge({ Icon }) {
@@ -1206,14 +1179,16 @@ function ResultsView({ picks, blurb }) {
               style={{ backfaceVisibility: "hidden" }}
             >
               {/* MSRP badge (top-right) */}
-              {Number.isFinite(featured?.PriceEUR) && featured.PriceEUR > 0 && (
-                <div
-                  className="absolute right-4 top-4 rounded-2xl px-3 py-1 text-sm font-semibold ring-1 ring-emerald-200 bg-emerald-50 text-emerald-800"
-                  title="Approx. MSRP / launch price"
-                >
-                  €{Number(featured.PriceEUR).toFixed(0)}
-                </div>
-              )}
+{Number.isFinite(featured?.PriceEUR) && featured.PriceEUR > 0 && (
+  <div
+    className="absolute right-3 top-3 md:right-4 md:top-4 rounded-2xl px-2.5 py-1 text-[12px] md:text-sm font-semibold ring-1 ring-emerald-200 bg-emerald-50 text-emerald-800"
+    title={featured?.PriceSource === "idealo_low" ? "Lowest price (Idealo)" :
+           featured?.PriceSource === "amazon" ? "Live price (Amazon)" :
+           "Approx. MSRP / launch price"}
+  >
+    €{Number(featured.PriceEUR).toFixed(0)}
+  </div>
+)}
 
               {/* DXOMARK badge — only on featured (bottom-right) */}
               {"DxOMarkCameraRank" in (featured || {}) && (

@@ -154,6 +154,86 @@ def _seed_gsma_if_missing():
     except Exception as e:
         print("[startup] GSMA bootstrap failed:", e)
 
+# --- Simple gallery fetcher (Wikimedia first, fallback to Wikipedia thumb) ---
+def fetch_phone_gallery(brand: str, model: str, limit: int = 4) -> list[str]:
+    """
+    Returns a few safe, hotlinkable image URLs (ideally front/back/side).
+    Strategy:
+      1) Wikimedia commons search for "<brand> <model>" and take first images.
+      2) Fallback to Wikipedia pageimage thumbnail.
+    """
+    import requests, re, html
+    q = f"{brand} {model}"
+    out = []
+
+    # (1) Wikimedia Commons search (images + imageinfo)
+    try:
+        sr = requests.get(
+            "https://commons.wikimedia.org/w/api.php",
+            params={
+                "action": "query",
+                "format": "json",
+                "prop": "imageinfo",
+                "generator": "search",
+                "gsrsearch": q,
+                "gsrnamespace": 6,     # File:
+                "gsrlimit": max(3, min(8, limit+2)),
+                "iiprop": "url",
+                "iiurlwidth": 1024,
+            },
+            timeout=10,
+        )
+        j = sr.json()
+        pages = (j.get("query", {}) or {}).get("pages", {}) or {}
+        # Prefer PNG/JPG phone-like filenames
+        def score(name: str) -> int:
+            n = name.lower()
+            s = 0
+            if "iphone" in n or "galaxy" in n or brand.lower() in n or model.lower() in n: s += 3
+            if "front" in n or "back" in n or "side" in n: s += 2
+            if n.endswith((".jpg", ".jpeg", ".png")): s += 1
+            return s
+        pics = []
+        for p in pages.values():
+            title = p.get("title","")
+            ii = (p.get("imageinfo") or [{}])[0]
+            url = ii.get("thumburl") or ii.get("url")
+            if url:
+                pics.append((score(title), url))
+        pics.sort(reverse=True)
+        out = [u for _, u in pics][:limit]
+    except Exception:
+        pass
+
+    # (2) Fallback to Wikipedia pageimage
+    if not out:
+        try:
+            title = q.strip()
+            r = requests.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "prop": "pageimages",
+                    "format": "json", "pithumbsize": "1024", "titles": title
+                },
+                timeout=8,
+            )
+            data = r.json().get("query", {}).get("pages", {})
+            for _, page in data.items():
+                t = (page.get("thumbnail") or {}).get("source")
+                if t:
+                    out.append(t)
+                    break
+        except Exception:
+            pass
+
+    # final de-dupe
+    seen, uniq = set(), []
+    for u in out:
+        if u and u not in seen:
+            seen.add(u); uniq.append(u)
+    return uniq[:limit]
+
+
 
 # ------------------ YouTube live fetch + CSV cache ------------------
 # Requires: env var YOUTUBE_API_KEY (YouTube Data API v3 enabled)
@@ -1298,6 +1378,51 @@ except Exception:
 
 # at the top of the file if not already present
 
+USE_IDEALO_LIVE = os.getenv("USE_IDEALO_LIVE", "0") == "1"
+IDEALO_DOMAIN = os.getenv("IDEALO_DOMAIN", "idealo.de")  # change per region if you want
+
+def _idealo_search_url(brand: str, model: str) -> str:
+    from urllib.parse import quote_plus
+    q = quote_plus(f"{brand} {model}")
+    # generic search; user will click through; we only probe for lowPrice if allowed
+    return f"https://www.{IDEALO_DOMAIN}/preisvergleich/MainSearchProductCategory.html?q={q}"
+
+def _probe_idealo_lowest(brand: str, model: str, timeout: int = 10) -> tuple[float | None, str | None]:
+    """
+    Best-effort: fetch search page and try to read a low price from JSON-LD blocks if present.
+    Returns (price_eur, click_url) or (None, search_url) if not available.
+    """
+    if not USE_IDEALO_LIVE:
+        return None, _idealo_search_url(brand, model)
+
+    import requests, re, json
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/123.0 Safari/537.36"
+    }
+    url = _idealo_search_url(brand, model)
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        # Look for JSON-LD with "lowPrice" (many list pages expose an AggregateOffer)
+        for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', r.text, re.S|re.I):
+            try:
+                data = json.loads(m.group(1))
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                offers = data.get("offers")
+                if isinstance(offers, dict):
+                    low = offers.get("lowPrice")
+                    cur = offers.get("priceCurrency") or "EUR"
+                    if low:
+                        try:
+                            return float(str(low).replace(",", ".")), url
+                        except Exception:
+                            pass
+    except Exception as e:
+        print("[idealo] probe failed:", e)
+    return None, url
 
 
 import os
@@ -1334,7 +1459,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         if not brand or not model:
-            print("[build] skip row with missing brand/model:", row.to_dict()); 
+            print("[build] skip row with missing brand/model:", row.to_dict())
             continue
 
         # --- Live specs merge (GSMA fallback) ---
@@ -1344,7 +1469,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             print("[merge_live_specs] failed:", e)
             merged = row
 
-        # --- Slug + images ---
+        # --- Slug + single image ---
         slug = row.get("Slug")
         try:
             is_nan_slug = pd.isna(slug)
@@ -1365,6 +1490,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         )
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
+
+        # --- Gallery (safe hotlinks) ---
+        try:
+            gallery_urls = fetch_phone_gallery(brand, model, limit=4)
+        except Exception as _e:
+            gallery_urls = []
 
         # --- Pros / Cons (YT + LLM + Reddit) ---
         pros: list[str] = []
@@ -1408,39 +1539,45 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception:
                 return None
 
-        # --- MSRP / PriceEUR resolution (live GSMA -> EUR; fallback to CSV) ---
-        price_eur_final = fnum(row.get("PriceEUR"), float) or 0.0
-        try:
-            # optional helpers from gsma_scraper
-            from gsma_scraper import fetch_price_live
-            livep = fetch_price_live(brand, model)
-            if livep and livep.get("amount"):
-                amt = float(livep["amount"])
-                ccy = (livep.get("currency") or "EUR").upper()
-                if ccy == "EUR":
-                    price_eur_final = amt
-                elif ccy == "USD":
-                    price_eur_final = amt * float(os.getenv("FX_EUR_PER_USD", str(EUR_PER_USD)))
-                elif ccy == "GBP":
-                    price_eur_final = amt * float(os.getenv("FX_EUR_PER_GBP", "1.17"))
-                price_eur_final = round(price_eur_final, 2)
-        except Exception as e:
-            # quiet fallback; keep CSV value
-            pass
+        # --- PRICE / OFFER (Idealo -> Amazon -> MSRP) ---
+        price_src = "unknown"
+        price_val = None
+        price_url = None
 
-        # --- Gallery (GSMA bigpic thumbnails) ---
-        gallery = []
+        # 1) Idealo lowest (optional helper; safe fallback if missing)
         try:
-            from gsma_scraper import fetch_gallery_urls
-            gallery = fetch_gallery_urls(brand, model, max_images=6) or []
-        except Exception as e:
-            gallery = []
+            if "_probe_idealo_lowest" in globals() and callable(globals()["_probe_idealo_lowest"]):
+                p, idealo_url = _probe_idealo_lowest(brand, model)
+                if p:
+                    price_src, price_val, price_url = "idealo_low", float(p), idealo_url
+        except Exception as _e:
+            print("[price] idealo failed:", _e)
 
+        # 2) Amazon live
+        if price_val is None:
+            try:
+                amz = fetch_amazon_offer(brand, model)
+                if amz and amz.get("price"):
+                    price_src = "amazon"
+                    price_val = float(amz.get("price"))
+                    price_url = amz.get("url")
+            except Exception as _e:
+                print("[price] amazon failed:", _e)
+
+        # 3) MSRP / CSV fallback
+        if price_val is None:
+            msrp_eur = fnum(row.get("PriceEUR"), float)
+            if msrp_eur:
+                price_src = "msrp"
+                price_val = float(msrp_eur)
+                price_url = None
+
+        # --- Build item ---
         item = {
             "Brand": brand,
             "Model": model,
             "ReleaseYear": fnum(merged.get("ReleaseYear"), int) or 0,
-            "PriceEUR": price_eur_final,  # <- resolved MSRP in EUR
+            "PriceEUR": float(price_val) if price_val is not None else (fnum(row.get("PriceEUR"), float) or 0.0),
             "DisplayInches": fnum(merged.get("DisplayInches"), float),
             "Battery_mAh": fnum(merged.get("Battery_mAh"), int),
             "RAM_GB": fnum(merged.get("RAM_GB"), float),
@@ -1452,10 +1589,22 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "ImageLocal": phone_local,
             "ImageURL": image_url,
             "BrandLogo": brand_logo,
-            "Gallery": gallery,           # <- new
+            "Gallery": gallery_urls,
             "Pros": pros or [],
             "Cons": cons or [],
         }
+
+        # attach canonical offer struct + metadata if we have any price
+        if price_val is not None:
+            item["LiveOffer"] = {
+                "retailer": price_src,
+                "url": price_url,
+                "price": float(price_val),
+                "currency": "EUR",
+                "in_stock": True,
+            }
+            item["PriceSource"] = price_src
+            item["PriceLink"] = price_url
 
         # --- DXOMARK rank ---
         try:
@@ -1465,35 +1614,6 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
                     item["DxOMarkCameraRank"] = int(rnk)
         except Exception as e:
             print("[dxo] fetch failed:", e)
-
-        # --- Live offer (Amazon) with MSRP fallback ---
-        try:
-            amz = fetch_amazon_offer(brand, model)  # may be None/401 in your env
-            if amz and amz.get("price"):
-                item["LiveOffer"] = {
-                    "retailer": "amazon",
-                    "url": amz.get("url"),
-                    "price": float(amz.get("price")),
-                    "currency": (amz.get("currency") or "EUR"),
-                    "in_stock": bool(amz.get("in_stock", True)),
-                }
-            elif price_eur_final:
-                item["LiveOffer"] = {
-                    "retailer": "msrp",
-                    "url": None,
-                    "price": price_eur_final,
-                    "currency": "EUR",
-                    "in_stock": True,
-                }
-        except Exception as _e:
-            if price_eur_final:
-                item["LiveOffer"] = {
-                    "retailer": "msrp",
-                    "url": None,
-                    "price": price_eur_final,
-                    "currency": "EUR",
-                    "in_stock": True,
-                }
 
         # --- Explanations map ---
         try:
