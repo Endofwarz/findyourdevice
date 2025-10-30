@@ -1060,13 +1060,15 @@ function ResultsView({ picks, blurb }) {
   // Local copy so we can animate reorder
   const [items, setItems] = React.useState(picks);
   const [featuredIdx, setFeaturedIdx] = React.useState(0);
-  const [showLinks, setShowLinks] = React.useState(false);
+
+  // 1) flip state for the featured card only
+  const [flipped, setFlipped] = React.useState(false);
 
   // Reset when new results arrive
   React.useEffect(() => {
     setItems(picks);
     setFeaturedIdx(0);
-    setShowLinks(false);
+    setFlipped(false);
   }, [JSON.stringify(picks)]);
 
   const featured = items[featuredIdx];
@@ -1076,6 +1078,7 @@ function ResultsView({ picks, blurb }) {
     // Find absolute index of the chosen item
     const absoluteIdx = items.findIndex((_, i) => i !== featuredIdx && (i > featuredIdx ? i - 1 : i) === idxInRest);
     if (absoluteIdx < 0) return;
+
     // Swap into position 0 with a nice layout animation
     setItems((prev) => {
       const next = [...prev];
@@ -1084,12 +1087,15 @@ function ResultsView({ picks, blurb }) {
       return next;
     });
     setFeaturedIdx(0);
-    setShowLinks(false);
+
+    // reset flip on promote
+    setFlipped(false);
+
     // scroll back to top (nice polish)
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  // Small subcomponent: quick marketplace strip (used ONLY on featured)
+  // Small subcomponent: quick marketplace strip (used ONLY on featured back)
   const MarketStrip = ({ brand, model }) => {
     const links = buildMarketplaceLinks(brand, model);
     return (
@@ -1102,7 +1108,6 @@ function ResultsView({ picks, blurb }) {
             rel="noreferrer"
             className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 hover:shadow"
           >
-            {/* logos are external svgs; keep them small and consistent */}
             <img
               src={m.logo}
               alt={m.label}
@@ -1116,106 +1121,117 @@ function ResultsView({ picks, blurb }) {
     );
   };
 
+  // 2) blurb must follow the featured pick
+  const heroBlurb = (featured?.Blurb || blurb || "").trim();
+
   return (
     <div className="space-y-8">
-      {/* FEATURED CARD */}
+      {/* FEATURED CARD (flip container) */}
       <motion.div layout className="max-w-5xl mx-auto">
-        <motion.div
-          layout
-          className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200"
-        >
-          {/* DXOMARK badge — only on featured */}
-          {"DxOMarkCameraRank" in (featured || {}) && (
-            <div
-              className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
-              style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
-              title="DXOMARK Camera ranking"
-            >
-              DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
-            </div>
-          )}
+        <div className="relative [perspective:1200px]">
+          <div
+            className={`relative transition-transform duration-500 [transform-style:preserve-3d] ${
+              flipped ? "[transform:rotateY(180deg)]" : ""
+            }`}
+          >
+            {/* FRONT FACE */}
+            <div className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200 backface-hidden">
+              {/* DXOMARK badge — only on featured front */}
+              {"DxOMarkCameraRank" in (featured || {}) && (
+                <div
+                  className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+                  style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+                  title="DXOMARK Camera ranking"
+                >
+                  DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
+                </div>
+              )}
 
-          <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
-            <div className="mx-auto w-full">
-              <PhoneImage
-                localSrc={featured?.ImageLocal}
-                remoteSrc={featured?.ImageURL}
-                brandLogo={featured?.BrandLogo}
-                alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-              />
-            </div>
-
-            <div>
-              {/* Title row */}
-              <div className="flex items-start justify-between gap-3">
-                <div className="text-2xl md:text-3xl font-semibold">
-                  {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+              <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+                <div className="mx-auto w-full">
+                  <PhoneImage
+                    localSrc={featured?.ImageLocal}
+                    remoteSrc={featured?.ImageURL}
+                    brandLogo={featured?.BrandLogo}
+                    alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
+                  />
                 </div>
 
-                {/* Only featured shows "Where to buy" */}
+                <div>
+                  {/* Title row */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="text-2xl md:text-3xl font-semibold">
+                      {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+                    </div>
+
+                    {/* Flip toggle (only on featured) */}
+                    <button
+                      type="button"
+                      onClick={() => setFlipped(true)}
+                      className="shrink-0 rounded-xl px-3 py-1 text-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                      title="Show quick marketplace links"
+                    >
+                      Where to buy
+                    </button>
+                  </div>
+
+                  {/* Subline with quick specs */}
+                  <div className="text-sm text-slate-500 mt-1">
+                    {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+                  </div>
+                  <div className="text-sm text-slate-500">
+                    {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                    {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+                    {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+                    {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
+                  </div>
+
+                  {/* Featured blurb — visible only on main */}
+                  {heroBlurb && (
+                    <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                      {heroBlurb}
+                    </div>
+                  )}
+
+                  {(featured?.Pros?.length || featured?.Cons?.length) ? (
+                    <div className="grid md:grid-cols-2 gap-6 mt-5">
+                      <div>
+                        <div className="text-sm font-medium">Why it fits</div>
+                        <BulletList items={featured?.Pros || []} pick={featured} />
+                      </div>
+                      <div>
+                        <div className="text-sm font-medium">Trade-offs</div>
+                        <BulletList items={featured?.Cons || []} pick={featured} isCon />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            {/* BACK FACE (links) */}
+            <div className="absolute inset-0 rounded-3xl bg-white shadow p-6 md:p-8 ring-1 ring-slate-200 [transform:rotateY(180deg)] backface-hidden">
+              <div className="flex items-start justify-between">
+                <div className="text-lg md:text-xl font-semibold">
+                  {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+                </div>
                 <button
                   type="button"
-                  onClick={() => setShowLinks((v) => !v)}
-                  className="shrink-0 rounded-xl px-3 py-1 text-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
-                  title="Show quick marketplace links"
+                  onClick={() => setFlipped(false)}
+                  className="rounded-xl px-3 py-1 text-sm border"
                 >
-                  {showLinks ? "Hide" : "Where to buy"}
+                  Back
                 </button>
               </div>
 
-              {/* Subline with quick specs */}
-              <div className="text-sm text-slate-500 mt-1">
-                {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+              <div className="mt-4 text-xs text-slate-500">Quick links (opens in new tab)</div>
+              <MarketStrip brand={featured?.Brand} model={featured?.Model} />
+              <div className="text-[11px] text-slate-400 mt-3">
+                We’re not tracking prices yet — these are search links for your region.
               </div>
-              <div className="text-sm text-slate-500">
-                {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
-                {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
-                {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
-                {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
-              </div>
-
-              {/* Flip panel: quick links (only for featured) */}
-              <AnimatePresence initial={false}>
-                {showLinks && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    className="mt-3"
-                  >
-                    <div className="text-xs text-slate-500 mb-1">
-                      Quick links (opens in a new tab)
-                    </div>
-                    <MarketStrip brand={featured?.Brand} model={featured?.Model} />
-                    <div className="text-[11px] text-slate-400 mt-2">
-                      We’re not tracking prices yet — these are search links for your region.
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Featured blurb — computed for all picks but ONLY visible on main */}
-              {blurb ? (
-                <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
-                  {blurb}
-                </div>
-              ) : null}
-
-              {(featured?.Pros?.length || featured?.Cons?.length) ? (
-                <div className="grid md:grid-cols-2 gap-6 mt-5">
-                  <div>
-                    <div className="text-sm font-medium">Why it fits</div>
-                    <BulletList items={featured?.Pros || []} pick={featured} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-medium">Trade-offs</div>
-                    <BulletList items={featured?.Cons || []} pick={featured} isCon />
-                  </div>
-                </div>
-              ) : null}
             </div>
           </div>
-        </motion.div>
+        </div>
       </motion.div>
 
       {/* ALTERNATIVES */}
@@ -1253,8 +1269,7 @@ function ResultsView({ picks, blurb }) {
                   {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
                 </div>
 
-                {/* No “Where to buy” on alternatives */}
-                {/* No blurb or DXOMARK on alternatives */}
+                {/* No “Where to buy”, blurb or DXOMARK on alternatives */}
 
                 {(p?.Pros?.length || p?.Cons?.length) ? (
                   <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
