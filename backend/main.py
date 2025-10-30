@@ -1118,16 +1118,20 @@ def _direct_results_response(session_id: str, intent: dict, skipped: set | None 
             print(f"[gsma-live] failed for {p.get('Brand')} {p.get('Model')}: {e}")
     # ----------------------------------
 
-    # blurb
+    # blurb: prefer per-pick blurb for the featured card
     ask = None
-    try:
-        if not ranked.empty:
-            ask = _blurb_for_row(intent, ranked.iloc[0]) or None
-    except Exception:
-        ask = None
+    if picks:
+        ask = (picks[0] or {}).get("Blurb") or None
+    if not ask:
+        try:
+            if not ranked.empty:
+                ask = _blurb_for_row(intent, ranked.iloc[0]) or None
+        except Exception:
+            ask = None
     if not ask and picks:
         top = picks[0]
         ask = f"I’d start with {top['Brand']} {top['Model']} — strong match for what you asked."
+
 
     # save
     SESSIONS[session_id] = {"intent": intent, "ask_key": None, "skipped": skipped}
@@ -1428,13 +1432,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
 
         # DXOMARK rank (same)
         try:
-            if not dxo_done and os.getenv("USE_DXOMARK_LIVE", "1") == "1":
+            if os.getenv("USE_DXOMARK_LIVE", "1") == "1":
                 rnk = cached_dxomark_rank(brand, model)
                 if rnk is not None:
                     item["DxOMarkCameraRank"] = int(rnk)
-                dxo_done = True
         except Exception as e:
-            print("[dxo] fetch failed:", e); dxo_done = True
+            print("[dxo] fetch failed:", e)
 
         # Live offer (Amazon) with MSRP fallback (EUR only)
         try:
@@ -1473,6 +1476,13 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             item["Explain"] = attach_explanations(intent, row, item["Pros"], item["Cons"])
         except Exception as _e:
             print("[explain] failed:", _e)
+
+        # Per-pick blurb (LLM + heuristics). Frontend shows it only for featured.
+        try:
+            item["Blurb"] = _blurb_for_row(intent, row) or ""
+        except Exception as e:
+            print("[blurb] per-pick failed:", e)
+            item["Blurb"] = ""
 
         picks.append(item)
 
@@ -2392,18 +2402,21 @@ def _answer_or_ask(intent: dict, skipped: set, user_text: str) -> tuple[Optional
         except Exception:
             count = len(df_cand)
 
-        # blurb
+        # blurb: use featured card's per-pick blurb; fall back to df-row blurb; then generic
         ask = None
         if picks:
+            ask = (picks[0] or {}).get("Blurb") or None
+        if not ask and picks:
             try:
                 if not df_cand.empty:
                     ask = _blurb_for_row(intent, df_cand.iloc[0]) or None
             except Exception as e:
-                print("[_compose_blurb] failed:", e)
+                print("[blurb fallback] failed:", e)
                 ask = None
-            if not ask:
-                top = picks[0]
-                ask = f"I’d start with {top['Brand']} {top['Model']} — strong match for what you asked."
+        if not ask and picks:
+            top = picks[0]
+            ask = f"I’d start with {top['Brand']} {top['Model']} — strong match for what you asked."
+
 
         return ask, picks, int(count)
 

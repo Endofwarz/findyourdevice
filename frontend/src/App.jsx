@@ -134,32 +134,41 @@ function amazonAffiliateSearchUrl(pick) {
   return tag ? `${base}&tag=${encodeURIComponent(tag)}` : base;
 }
 
-/* ---------- marketplace helpers ---------- */
-function searchLinksForPick(pick) {
-  const q = encodeURIComponent([pick?.Brand, pick?.Model].filter(Boolean).join(" ").trim());
+/* ---- Marketplaces: logo + search links ---- */
+const LOGOS = {
+  amazon: "https://unpkg.com/simple-icons@v13/icons/amazon.svg",
+  prisjakt: "https://upload.wikimedia.org/wikipedia/commons/0/01/Prisjakt_logo.svg",
+  idealo: "https://upload.wikimedia.org/wikipedia/commons/4/4f/Idealo_logo_2019.svg",
+};
+
+function brandModelQuery(brand, model) {
+  return encodeURIComponent([brand, model].filter(Boolean).join(" "));
+}
+
+function buildMarketplaceLinks(brand, model) {
+  const q = brandModelQuery(brand, model);
   return [
     {
       id: "amazon",
-      name: "Amazon",
-      url: `https://www.amazon.de/s?k=${q}`,
-      logo: "https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg",
+      label: "Amazon",
+      logo: LOGOS.amazon,
+      url: `https://www.amazon.se/s?k=${q}`,
     },
     {
       id: "prisjakt",
-      name: "Prisjakt",
+      label: "Prisjakt",
+      logo: LOGOS.prisjakt,
       url: `https://www.prisjakt.nu/search?search=${q}`,
-      logo: "https://assets.prisjakt.nu/assets/logo/prisjakt-logo.svg",
     },
     {
       id: "idealo",
-      name: "idealo",
+      label: "idealo",
+      logo: LOGOS.idealo,
       url: `https://www.idealo.de/preisvergleich/MainSearchProductCategory.html?q=${q}`,
-      logo: "https://upload.wikimedia.org/wikipedia/commons/0/0e/Idealo_logo.svg",
     },
-    // you can add Google Shopping too:
-    // { id:"gshop", name:"Google Shopping", url:`https://www.google.com/search?tbm=shop&q=${q}`, logo:"…" }
   ];
 }
+
 
 
 
@@ -1039,6 +1048,7 @@ function Bullet({ text, tip }) {
 }
 
 function ResultsView({ picks, blurb }) {
+  // Guard
   if (!Array.isArray(picks) || picks.length === 0) {
     return (
       <div className="bg-white rounded-2xl shadow p-8 text-slate-500">
@@ -1047,31 +1057,231 @@ function ResultsView({ picks, blurb }) {
     );
   }
 
-  // Which item is "main" right now
-  const [mainIdx, setMainIdx] = React.useState(0);
-  const featured = picks[mainIdx] || picks[0];
+  // Local copy so we can animate reorder
+  const [items, setItems] = React.useState(picks);
+  const [featuredIdx, setFeaturedIdx] = React.useState(0);
+  const [showLinks, setShowLinks] = React.useState(false);
 
-  // everything else in order
-  const rest = picks
-    .map((p, i) => ({ p, i }))
-    .filter(({ i }) => i !== mainIdx);
+  // Reset when new results arrive
+  React.useEffect(() => {
+    setItems(picks);
+    setFeaturedIdx(0);
+    setShowLinks(false);
+  }, [JSON.stringify(picks)]);
+
+  const featured = items[featuredIdx];
+  const rest = items.filter((_, i) => i !== featuredIdx);
+
+  const makeMain = (idxInRest) => {
+    // Find absolute index of the chosen item
+    const absoluteIdx = items.findIndex((_, i) => i !== featuredIdx && (i > featuredIdx ? i - 1 : i) === idxInRest);
+    if (absoluteIdx < 0) return;
+    // Swap into position 0 with a nice layout animation
+    setItems((prev) => {
+      const next = [...prev];
+      const [picked] = next.splice(absoluteIdx, 1);
+      next.unshift(picked);
+      return next;
+    });
+    setFeaturedIdx(0);
+    setShowLinks(false);
+    // scroll back to top (nice polish)
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Small subcomponent: quick marketplace strip (used ONLY on featured)
+  const MarketStrip = ({ brand, model }) => {
+    const links = buildMarketplaceLinks(brand, model);
+    return (
+      <div className="mt-3 grid sm:grid-cols-3 gap-3">
+        {links.map((m) => (
+          <a
+            key={m.id}
+            href={m.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 hover:shadow"
+          >
+            {/* logos are external svgs; keep them small and consistent */}
+            <img
+              src={m.logo}
+              alt={m.label}
+              className="h-5 w-5 object-contain opacity-80"
+              loading="lazy"
+            />
+            <span className="text-sm">{m.label}</span>
+          </a>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-8">
-      {/* Featured (large, flippable) */}
-      <FlippableCard pick={featured} variant="featured" showBlurb={true} blurb={blurb} />
+      {/* FEATURED CARD */}
+      <motion.div layout className="max-w-5xl mx-auto">
+        <motion.div
+          layout
+          className="relative bg-white rounded-3xl shadow p-6 md:p-8 ring-1 ring-slate-200"
+        >
+          {/* DXOMARK badge — only on featured */}
+          {"DxOMarkCameraRank" in (featured || {}) && (
+            <div
+              className="absolute right-4 bottom-4 rounded-2xl px-3 py-1 text-sm font-medium shadow-md"
+              style={{ background: "rgba(0,0,0,0.75)", color: "white" }}
+              title="DXOMARK Camera ranking"
+            >
+              DXOMARK • #{featured.DxOMarkCameraRank ?? "—"}
+            </div>
+          )}
 
-      {/* Runner-ups (flippable, can promote to main) */}
+          <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
+            <div className="mx-auto w-full">
+              <PhoneImage
+                localSrc={featured?.ImageLocal}
+                remoteSrc={featured?.ImageURL}
+                brandLogo={featured?.BrandLogo}
+                alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
+              />
+            </div>
+
+            <div>
+              {/* Title row */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-2xl md:text-3xl font-semibold">
+                  {(featured?.Brand ?? "")} {(featured?.Model ?? "")}
+                </div>
+
+                {/* Only featured shows "Where to buy" */}
+                <button
+                  type="button"
+                  onClick={() => setShowLinks((v) => !v)}
+                  className="shrink-0 rounded-xl px-3 py-1 text-sm border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                  title="Show quick marketplace links"
+                >
+                  {showLinks ? "Hide" : "Where to buy"}
+                </button>
+              </div>
+
+              {/* Subline with quick specs */}
+              <div className="text-sm text-slate-500 mt-1">
+                {(featured?.OS ?? "—")} • {(featured?.ReleaseYear ?? "—")}
+              </div>
+              <div className="text-sm text-slate-500">
+                {featured?.DisplayInches ? `${Number(featured.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                {featured?.Battery_mAh ? `${featured.Battery_mAh} mAh` : "—"} •{" "}
+                {featured?.RAM_GB ? `${featured.RAM_GB} GB RAM` : "—"} •{" "}
+                {featured?.Storage_GB ? `${featured.Storage_GB} GB` : "—"}
+              </div>
+
+              {/* Flip panel: quick links (only for featured) */}
+              <AnimatePresence initial={false}>
+                {showLinks && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -6 }}
+                    className="mt-3"
+                  >
+                    <div className="text-xs text-slate-500 mb-1">
+                      Quick links (opens in a new tab)
+                    </div>
+                    <MarketStrip brand={featured?.Brand} model={featured?.Model} />
+                    <div className="text-[11px] text-slate-400 mt-2">
+                      We’re not tracking prices yet — these are search links for your region.
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Featured blurb — computed for all picks but ONLY visible on main */}
+              {blurb ? (
+                <div className="mt-3 bg-indigo-50 text-indigo-800 rounded-xl px-3 py-2 text-sm">
+                  {blurb}
+                </div>
+              ) : null}
+
+              {(featured?.Pros?.length || featured?.Cons?.length) ? (
+                <div className="grid md:grid-cols-2 gap-6 mt-5">
+                  <div>
+                    <div className="text-sm font-medium">Why it fits</div>
+                    <BulletList items={featured?.Pros || []} pick={featured} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">Trade-offs</div>
+                    <BulletList items={featured?.Cons || []} pick={featured} isCon />
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </motion.div>
+      </motion.div>
+
+      {/* ALTERNATIVES */}
       {rest.length > 0 && (
         <div className="max-w-5xl mx-auto grid md:grid-cols-2 gap-6">
-          {rest.map(({ p, i }) => (
-            <FlippableCard
-              key={`${p?.Brand}-${p?.Model}-${i}`}
-              pick={p}
-              variant="alt"
-              showBlurb={false}
-              onMakeMain={() => setMainIdx(i)}
-            />
+          {rest.map((p, idx) => (
+            <motion.div layout key={`${p?.Brand}-${p?.Model}-${idx}`} className="bg-white rounded-3xl shadow p-4 ring-1 ring-slate-200">
+              {/* Label */}
+              <div className="mb-2">
+                <span className="inline-flex items-center rounded-full bg-slate-100 text-slate-700 text-xs px-2 py-0.5">
+                  Alternative
+                </span>
+              </div>
+
+              <PhoneImage
+                localSrc={p?.ImageLocal}
+                remoteSrc={p?.ImageURL}
+                brandLogo={p?.BrandLogo}
+                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
+              />
+
+              <div className="mt-3">
+                <div className="text-lg font-semibold">
+                  {(p?.Brand ?? "")} {(p?.Model ?? "")}
+                </div>
+
+                {/* Subline */}
+                <div className="text-xs text-slate-500">
+                  {(p?.OS ?? "—")} • {(p?.ReleaseYear ?? "—")}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {p?.DisplayInches ? `${Number(p.DisplayInches).toFixed(2)}"` : "—"} •{" "}
+                  {p?.Battery_mAh ? `${p.Battery_mAh} mAh` : "—"} •{" "}
+                  {p?.RAM_GB ? `${p.RAM_GB} GB RAM` : "—"} •{" "}
+                  {p?.Storage_GB ? `${p.Storage_GB} GB` : "—"}
+                </div>
+
+                {/* No “Where to buy” on alternatives */}
+                {/* No blurb or DXOMARK on alternatives */}
+
+                {(p?.Pros?.length || p?.Cons?.length) ? (
+                  <div className="grid grid-cols-2 gap-3 mt-3 text-sm">
+                    <div>
+                      <div className="text-sm font-medium">Pros</div>
+                      <BulletList items={p?.Pros || []} pick={p} />
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium">Cons</div>
+                      <BulletList items={p?.Cons || []} pick={p} isCon />
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Promote button */}
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => makeMain(idx)}
+                    className="rounded-2xl px-4 py-2 text-sm bg-black text-white hover:opacity-90"
+                    title="Promote to main pick"
+                  >
+                    Make main
+                  </button>
+                </div>
+              </div>
+            </motion.div>
           ))}
         </div>
       )}
