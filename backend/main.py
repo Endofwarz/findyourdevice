@@ -1308,7 +1308,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     if d is None or d.empty:
         return picks
 
-    # rank & de-dup (same as before)
+    # rank & de-dup
     try:
         ranked = rank_df(d, intent)
     except Exception as e:
@@ -1330,22 +1330,21 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             pass
         return [], []
 
-    dxo_done = False
-
-    for idx, (_, row) in enumerate(ranked.iterrows()):
+    for _, row in ranked.iterrows():
         brand = (row.get("Brand") or "").strip()
         model = (row.get("Model") or "").strip()
         if not brand or not model:
-            print("[build] skip row with missing brand/model:", row.to_dict()); continue
+            print("[build] skip row with missing brand/model:", row.to_dict()); 
+            continue
 
-        # live specs merge
+        # --- Live specs merge (GSMA fallback) ---
         try:
             merged = _merge_live_specs(row, brand, model)
         except Exception as e:
             print("[merge_live_specs] failed:", e)
             merged = row
 
-        # slug, images (same as before)
+        # --- Slug + images ---
         slug = row.get("Slug")
         try:
             is_nan_slug = pd.isna(slug)
@@ -1367,7 +1366,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # pros/cons (same)
+        # --- Pros / Cons (YT + LLM + Reddit) ---
         pros: list[str] = []
         cons: list[str] = []
         try:
@@ -1380,7 +1379,6 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as e:
             print("[pros/cons-live] failed:", e)
             pros, cons = [], []
-
         try:
             r_pros, r_cons = _reddit_search_pros_cons(slug, brand, model)
             pros = (pros or []) + (r_pros or [])
@@ -1410,11 +1408,39 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception:
                 return None
 
+        # --- MSRP / PriceEUR resolution (live GSMA -> EUR; fallback to CSV) ---
+        price_eur_final = fnum(row.get("PriceEUR"), float) or 0.0
+        try:
+            # optional helpers from gsma_scraper
+            from gsma_scraper import fetch_price_live
+            livep = fetch_price_live(brand, model)
+            if livep and livep.get("amount"):
+                amt = float(livep["amount"])
+                ccy = (livep.get("currency") or "EUR").upper()
+                if ccy == "EUR":
+                    price_eur_final = amt
+                elif ccy == "USD":
+                    price_eur_final = amt * float(os.getenv("FX_EUR_PER_USD", str(EUR_PER_USD)))
+                elif ccy == "GBP":
+                    price_eur_final = amt * float(os.getenv("FX_EUR_PER_GBP", "1.17"))
+                price_eur_final = round(price_eur_final, 2)
+        except Exception as e:
+            # quiet fallback; keep CSV value
+            pass
+
+        # --- Gallery (GSMA bigpic thumbnails) ---
+        gallery = []
+        try:
+            from gsma_scraper import fetch_gallery_urls
+            gallery = fetch_gallery_urls(brand, model, max_images=6) or []
+        except Exception as e:
+            gallery = []
+
         item = {
             "Brand": brand,
             "Model": model,
             "ReleaseYear": fnum(merged.get("ReleaseYear"), int) or 0,
-            "PriceEUR": fnum(row.get("PriceEUR"), float) or 0.0,
+            "PriceEUR": price_eur_final,  # <- resolved MSRP in EUR
             "DisplayInches": fnum(merged.get("DisplayInches"), float),
             "Battery_mAh": fnum(merged.get("Battery_mAh"), int),
             "RAM_GB": fnum(merged.get("RAM_GB"), float),
@@ -1426,11 +1452,12 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             "ImageLocal": phone_local,
             "ImageURL": image_url,
             "BrandLogo": brand_logo,
+            "Gallery": gallery,           # <- new
             "Pros": pros or [],
             "Cons": cons or [],
         }
 
-        # DXOMARK rank (same)
+        # --- DXOMARK rank ---
         try:
             if os.getenv("USE_DXOMARK_LIVE", "1") == "1":
                 rnk = cached_dxomark_rank(brand, model)
@@ -1439,45 +1466,42 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         except Exception as e:
             print("[dxo] fetch failed:", e)
 
-        # Live offer (Amazon) with MSRP fallback (EUR only)
+        # --- Live offer (Amazon) with MSRP fallback ---
         try:
-            amz = fetch_amazon_offer(brand, model)  # None or {price, currency, url, ...}
+            amz = fetch_amazon_offer(brand, model)  # may be None/401 in your env
             if amz and amz.get("price"):
                 item["LiveOffer"] = {
                     "retailer": "amazon",
                     "url": amz.get("url"),
                     "price": float(amz.get("price")),
-                    "currency": (amz.get("currency") or DEFAULT_CCY),
+                    "currency": (amz.get("currency") or "EUR"),
                     "in_stock": bool(amz.get("in_stock", True)),
                 }
-            else:
-                msrp_eur = fnum(row.get("PriceEUR"), float)
-                if msrp_eur:
-                    item["LiveOffer"] = {
-                        "retailer": "msrp",
-                        "url": None,
-                        "price": msrp_eur,
-                        "currency": "EUR",
-                        "in_stock": True,
-                    }
-        except Exception as _e:
-            print("[offers] attach failed:", _e)
-            msrp_eur = fnum(row.get("PriceEUR"), float)
-            if msrp_eur:
+            elif price_eur_final:
                 item["LiveOffer"] = {
                     "retailer": "msrp",
                     "url": None,
-                    "price": msrp_eur,
+                    "price": price_eur_final,
+                    "currency": "EUR",
+                    "in_stock": True,
+                }
+        except Exception as _e:
+            if price_eur_final:
+                item["LiveOffer"] = {
+                    "retailer": "msrp",
+                    "url": None,
+                    "price": price_eur_final,
                     "currency": "EUR",
                     "in_stock": True,
                 }
 
+        # --- Explanations map ---
         try:
             item["Explain"] = attach_explanations(intent, row, item["Pros"], item["Cons"])
         except Exception as _e:
             print("[explain] failed:", _e)
 
-        # Per-pick blurb (LLM + heuristics). Frontend shows it only for featured.
+        # --- Per-pick blurb (computed for all; UI only renders for featured) ---
         try:
             item["Blurb"] = _blurb_for_row(intent, row) or ""
         except Exception as e:
@@ -1487,6 +1511,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         picks.append(item)
 
     return picks
+
 
 def _enrich_bullets_llm(intent: dict, brand: str, model: str,
                         pros: list[str], cons: list[str]) -> tuple[list[str], list[str]]:

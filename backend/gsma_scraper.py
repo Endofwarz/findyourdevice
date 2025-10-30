@@ -1,12 +1,76 @@
 # backend/gsma_scraper.py
 from __future__ import annotations
-
+import re, requests
+from bs4 import BeautifulSoup
+PRICE_RE = re.compile(r"(?:about|around)?\s*([€$£])\s?([0-9][0-9.,]*)", re.I)
 import re
 import time
 from typing import Dict, List, Optional
 
 import httpx
 from bs4 import BeautifulSoup
+
+
+def fetch_price_live(brand: str, model: str) -> dict | None:
+    """
+    Returns {"currency": "EUR"/"USD"/"GBP", "amount": float} when found on GSMArena.
+    Looks in the 'Price' / 'Prices' field on the phone's page.
+    """
+    try:
+        url = find_model_url(brand, model)  # you already have find_* helpers; reuse the one that builds the model URL
+        if not url:
+            return None
+        html = requests.get(url, timeout=12).text
+        soup = BeautifulSoup(html, "html.parser")
+
+        # try Price row
+        price_text = None
+        for tr in soup.select("table#specs-list tr"):
+            th = (tr.find("th") or {}).get_text(" ", strip=True).lower()
+            if th in ("price", "prices"):
+                price_text = (tr.find("td") or {}).get_text(" ", strip=True)
+                break
+        if not price_text:
+            return None
+
+        m = PRICE_RE.search(price_text)
+        if not m:
+            return None
+        sym, num = m.group(1), m.group(2)
+        amt = float(num.replace(",", "").replace(" ", ""))
+        ccy = {"€": "EUR", "$": "USD", "£": "GBP"}.get(sym, "EUR")
+        return {"currency": ccy, "amount": amt}
+    except Exception:
+        return None
+
+def fetch_gallery_urls(brand: str, model: str, max_images: int = 6) -> list[str]:
+    """
+    Returns a list of full-size image URLs from GSMArena gallery if available.
+    """
+    urls = []
+    try:
+        page = find_model_url(brand, model)
+        if not page:
+            return urls
+        html = requests.get(page, timeout=12).text
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Big picture urls are usually in <img src="https://fdn2.gsmarena.com/vv/bigpic/....jpg">
+        for img in soup.select("img"):
+            src = img.get("src") or ""
+            if "gsmarena.com/vv/bigpic/" in src:
+                urls.append(src)
+        # de-dup & cap
+        out, seen = [], set()
+        for u in urls:
+            if u not in seen:
+                seen.add(u)
+                out.append(u)
+                if len(out) >= max_images:
+                    break
+        return out
+    except Exception:
+        return []
 
 # ---------- Constants / Globals ----------
 
