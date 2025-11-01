@@ -1580,7 +1580,7 @@ def llm_price_test_raw(brand: str, model: str):
 import os
 from dxomark_live import cached_dxomark_rank
 from urllib.parse import quote_plus
-from backend.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
+from .update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     picks: list[dict] = []
