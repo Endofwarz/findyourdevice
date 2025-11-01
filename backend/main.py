@@ -252,42 +252,33 @@ def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[
     Fetches image URLs for a phone from the TechSpecs API.
     Prioritizes front, back, and side views.
     """
-    if not TECHSPECS_API_KEY:
-        print("[techspecs] API key not set.")
+    if not TECHSPECS_API_KEY or not TECHSPECS_API_ID:
+        print("[techspecs] API key or ID not set.")
         return []
 
     headers = {
+        "X-API-ID": TECHSPECS_API_ID,
         "X-API-Key": TECHSPECS_API_KEY,
         "Content-Type": "application/json"
     }
-    # TechSpecs API often requires a specific format for brand and model
-    # Let's assume a search endpoint for now, or a direct lookup if available
-    # Based on their docs, a search query might be the most flexible
     search_query = f"{brand} {model}"
-    url = f"https://api.techspecs.io/v4/products/search" # This is a placeholder URL, need to verify TechSpecs API docs
+    url = "https://api.techspecs.io/v4/products/search"
 
     try:
-        # This part needs to be adapted based on actual TechSpecs API documentation
-        # Assuming a POST request for search with a 'query' parameter
-        payload = {"query": search_query, "limit": 1} # Fetch one product to get its images
+        payload = {"query": search_query, "limit": 1}
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        # Assuming the response structure contains a list of products, each with images
-        products = data.get("products", [])
+        products = data.get("data", {}).get("products", [])
         if not products:
             print(f"[techspecs] No products found for {brand} {model}")
             return []
 
-        # Take the first product found
         product = products[0]
         images = product.get("images", [])
 
-        # Filter and prioritize images (front, back, side)
         gallery_urls = []
-        # Simple heuristic: look for keywords in image URLs or labels
-        # This might need refinement based on actual TechSpecs image data
         keywords = {"front": None, "back": None, "side": None}
         for img in images:
             img_url = img.get("url")
@@ -302,15 +293,13 @@ def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[
             elif "side" in label and not keywords["side"]:
                 keywords["side"] = img_url
             else:
-                gallery_urls.append(img_url) # Add others to the general list
+                gallery_urls.append(img_url)
 
-        # Add prioritized images first
         final_images = []
         if keywords["front"]: final_images.append(keywords["front"])
         if keywords["back"]: final_images.append(keywords["back"])
         if keywords["side"]: final_images.append(keywords["side"])
 
-        # Add remaining images up to the limit
         for img_url in gallery_urls:
             if len(final_images) < limit:
                 final_images.append(img_url)
@@ -335,6 +324,7 @@ from datetime import datetime, timedelta
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 TECHSPECS_API_KEY = os.getenv("TECHSPECS_API_KEY", "").strip()
+TECHSPECS_API_ID = os.getenv("TECHSPECS_API_ID", "").strip()
 
 _REVIEWS_CSV = pathlib.Path("data/processed/reviews.csv")
 _REVIEWS_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -1490,24 +1480,29 @@ def fetch_price_with_llm(brand: str, model: str) -> tuple[float | None, str | No
     try:
         prompt = (
             f"What is the current approximate retail price of the {brand} {model} phone in EUR? "
-            "Provide only the price as a number and the currency symbol (e.g., '799€'). "
-            "If you cannot find a price, respond with 'None'."
+            "Return a JSON object with the keys 'price' (float) and 'currency' (string, e.g., 'EUR'). "
+            "If you cannot find a price, return null for both values."
         )
         # Use the lighter Mixtral model as requested
-        response = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=50, temperature=0.1)
+        response_text = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=100, temperature=0.1)
 
-        if response and response.strip().lower() != "none":
-            # Extract price and currency from the response
-            match = re.search(r"(\d[\d\.,]*)\s*(€|eur|usd|\$)", response, re.IGNORECASE)
-            if match:
-                price_str = match.group(1).replace(",", ".")
-                currency = match.group(2).upper()
-                price = float(price_str)
-                # Convert to EUR if necessary (assuming LLM might return USD)
-                if currency == "USD":
-                    # EUR_PER_USD is defined globally in main.py
-                    price *= EUR_PER_USD
-                return price, f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}"
+        if response_text:
+            # Try to parse the JSON response
+            try:
+                response_json = json.loads(response_text)
+                price = response_json.get("price")
+                currency = response_json.get("currency")
+
+                if price and currency:
+                    price = float(price)
+                    currency = currency.upper()
+                    # Convert to EUR if necessary
+                    if currency == "USD":
+                        price *= EUR_PER_USD
+                    return price, f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}"
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                print(f"[LLM price] Could not parse JSON response for {brand} {model}: {response_text}. Error: {e}")
+
     except Exception as e:
         print(f"[LLM price] failed for {brand} {model}: {e}")
     return None, None
