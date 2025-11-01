@@ -1479,7 +1479,38 @@ def _idealo_search_url(brand: str, model: str) -> str:
     # generic search; user will click through; we only probe for lowPrice if allowed
     return f"https://www.{IDEALO_DOMAIN}/preisvergleich/MainSearchProductCategory.html?q={q}"
 
-def _probe_idealo_lowest(brand: str, model: str, timeout: int = 10) -> tuple[float | None, str | None]:\n    \"\"\"\n    Best-effort: fetch search page and try to read a low price from JSON-LD blocks if present.\n    Returns (price_eur, click_url) or (None, search_url) if not available.\n    \"\"\"\n    if not USE_IDEALO_LIVE:\n        return None, _idealo_search_url(brand, model)\n\n    import requests, re, json\n    headers = {\n        \"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \"\n                      \"(KHTML, like Gecko) Chrome/123.0 Safari/537.36\"\n    }\n    url = _idealo_search_url(brand, model)\n    try:\n        r = requests.get(url, headers=headers, timeout=timeout)\n        r.raise_for_status()\n        # Look for JSON-LD with \"lowPrice\" (many list pages expose an AggregateOffer)\n        for m in re.finditer(r\'<script[^>]+type=[\"\\\']application/ld\\+json[\"\\\'][^>]*>(.*?)</script>\', r.text, re.S|re.I):\n            try:\n                data = json.loads(m.group(1))\n            except Exception:\n                continue\n            if isinstance(data, dict):\n                offers = data.get(\"offers\")\n                if isinstance(offers, dict):\n                    low = offers.get(\"lowPrice\")\n                    cur = offers.get(\"priceCurrency\") or \"EUR\"\n                    if low:\n                        try:\n                            return float(str(low).replace(\",\", \".\")), url\n                        except Exception:\n                            pass\n    except Exception as e:\n        print(\"[idealo] probe failed:\", e)\n    return None, url\n\ndef fetch_price_with_llm(brand: str, model: str) -> tuple[float | None, str | None]:\n    \"\"\"\n    Uses LLM to find the current price of a phone.\n    Returns (price_eur, search_url) or (None, None) if not available.\n    \"\"\"\n    if not USE_LLM:\n        return None, None\n\n    try:\n        prompt = (\n            f\"What is the current approximate retail price of the {brand} {model} phone in EUR? \"\n            \"Provide only the price as a number and the currency symbol (e.g., '799€'). \"\n            \"If you cannot find a price, respond with 'None'.\"\n        )\n        # Use the lighter Mixtral model as requested\n        response = chat_complete([{\"role\": \"user\", \"content\": prompt}], model=\"mixtral-8x7b\", max_tokens=50, temperature=0.1)\n\n        if response and response.strip().lower() != \"none\":\n            # Extract price and currency from the response\n            match = re.search(r\"(\d[\d\.,]*)\s*(€|eur|usd|\$)\", response, re.IGNORECASE)\n            if match:\n                price_str = match.group(1).replace(\",\", \".\")\n                currency = match.group(2).upper()\n                price = float(price_str)\n                # Convert to EUR if necessary (assuming LLM might return USD)\n                if currency == \"USD\":\n                    # EUR_PER_USD is defined globally in main.py\n                    price *= EUR_PER_USD\n                return price, f\"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}\"\n    except Exception as e:\n        print(f\"[LLM price] failed for {brand} {model}: {e}\")\n    return None, None
+def fetch_price_with_llm(brand: str, model: str) -> tuple[float | None, str | None]:
+    """
+    Uses LLM to find the current price of a phone.
+    Returns (price_eur, search_url) or (None, None) if not available.
+    """
+    if not USE_LLM:
+        return None, None
+
+    try:
+        prompt = (
+            f"What is the current approximate retail price of the {brand} {model} phone in EUR? "
+            "Provide only the price as a number and the currency symbol (e.g., '799€'). "
+            "If you cannot find a price, respond with 'None'."
+        )
+        # Use the lighter Mixtral model as requested
+        response = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=50, temperature=0.1)
+
+        if response and response.strip().lower() != "none":
+            # Extract price and currency from the response
+            match = re.search(r"(\d[\d\.,]*)\s*(€|eur|usd|\$)", response, re.IGNORECASE)
+            if match:
+                price_str = match.group(1).replace(",", ".")
+                currency = match.group(2).upper()
+                price = float(price_str)
+                # Convert to EUR if necessary (assuming LLM might return USD)
+                if currency == "USD":
+                    # EUR_PER_USD is defined globally in main.py
+                    price *= EUR_PER_USD
+                return price, f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}"
+    except Exception as e:
+        print(f"[LLM price] failed for {brand} {model}: {e}")
+    return None, None
 
 
 import os
