@@ -1,6 +1,11 @@
 from __future__ import annotations
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 from amazon_live import fetch_amazon_offer
-from dxomark_live import cached_dxomark_rank  # make sure this exists
+from dxomark_live import cached_dxomark_rank
+from urllib.parse import quote_plus
+from tools.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
 from gsma_scraper import fetch_specs_live, fetch_price_live, fetch_gallery_urls
 import traceback
 from gsma_scraper import fetch_specs_live, ScrapeError
