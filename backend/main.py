@@ -259,24 +259,38 @@ def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[
     headers = {
         "X-API-ID": TECHSPECS_API_ID,
         "X-API-Key": TECHSPECS_API_KEY,
-        "Content-Type": "application/json"
+        "accept": "application/json"
     }
     search_query = f"{brand} {model}"
-    url = "https://api.techspecs.io/v4/products/search"
+    url = f"https://api.techspecs.io/v5/products/search?query={quote_plus(search_query)}"
 
     try:
-        payload = {"query": search_query, "limit": 1}
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
 
-        products = data.get("data", {}).get("products", [])
+        products = data.get("data", [])
         if not products:
             print(f"[techspecs] No products found for {brand} {model}")
             return []
 
-        product = products[0]
-        images = product.get("images", [])
+        # The API returns a list of products, we need to find the best match
+        # For now, we'll take the first one, but this could be improved
+        product_id = products[0].get("id")
+        if not product_id:
+            print(f"[techspecs] No product ID found for {brand} {model}")
+            return []
+
+        # Now fetch the product details to get the images
+        product_url = f"https://api.techspecs.io/v5/products/{product_id}"
+        product_response = requests.get(product_url, headers=headers, timeout=10)
+        product_response.raise_for_status()
+        product_data = product_response.json()
+
+        images = product_data.get("data", {}).get("images", [])
+        if not images:
+            print(f"[techspecs] No images found for {brand} {model}")
+            return []
 
         gallery_urls = []
         keywords = {"front": None, "back": None, "side": None}
@@ -1480,32 +1494,34 @@ def fetch_price_with_llm(brand: str, model: str) -> tuple[float | None, str | No
     try:
         prompt = (
             f"What is the current approximate retail price of the {brand} {model} phone in EUR? "
-            "Return a JSON object with the keys 'price' (float) and 'currency' (string, e.g., 'EUR'). "
-            "If you cannot find a price, return null for both values."
+            "Provide only the price as a number (e.g., 799.99). "
+            "If you cannot find a price, respond with 'None'."
         )
         # Use the lighter Mixtral model as requested
-        response_text = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=100, temperature=0.1)
+        response_text = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=20, temperature=0.1)
 
-        if response_text:
-            # Try to parse the JSON response
-            try:
-                response_json = json.loads(response_text)
-                price = response_json.get("price")
-                currency = response_json.get("currency")
-
-                if price and currency:
-                    price = float(price)
-                    currency = currency.upper()
-                    # Convert to EUR if necessary
-                    if currency == "USD":
-                        price *= EUR_PER_USD
-                    return price, f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}"
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                print(f"[LLM price] Could not parse JSON response for {brand} {model}: {response_text}. Error: {e}")
-
+        if response_text and response_text.strip().lower() != "none":
+            # Extract price from the response
+            match = re.search(r"(\d[\d\.,]*)", response_text)
+            if match:
+                price_str = match.group(1).replace(",", ".")
+                price = float(price_str)
+                return price, f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}"
     except Exception as e:
         print(f"[LLM price] failed for {brand} {model}: {e}")
     return None, None
+
+@app.get("/llm/price_test_raw")
+def llm_price_test_raw(brand: str, model: str):
+    if not USE_LLM:
+        return {"ok": False, "reason": "USE_LLM=0"}
+    prompt = (
+        f"What is the current approximate retail price of the {brand} {model} phone in EUR? "
+        "Provide only the price as a number (e.g., 799.99). "
+        "If you cannot find a price, respond with 'None'."
+    )
+    response_text = chat_complete([{"role": "user", "content": prompt}], model="mixtral-8x7b", max_tokens=20, temperature=0.1)
+    return {"ok": True, "brand": brand, "model": model, "raw_response": response_text}
 
 
 import os
