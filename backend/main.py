@@ -101,6 +101,20 @@ def dxo_test(brand: str, model: str):
 def dxo_diag(brand: str, model: str):
     return diag_dxomark(brand, model)
 
+@app.get("/llm/price_test")
+def llm_price_test(brand: str, model: str):
+    if not USE_LLM:
+        return {"ok": False, "reason": "USE_LLM=0"}
+    price, url = fetch_price_with_llm(brand, model)
+    return {"ok": True, "brand": brand, "model": model, "price": price, "url": url}
+
+@app.get("/techspecs/image_test")
+def techspecs_image_test(brand: str, model: str):
+    if not TECHSPECS_API_KEY:
+        return {"ok": False, "reason": "TECHSPECS_API_KEY not set"}
+    urls = fetch_images_from_techspecs(brand, model)
+    return {"ok": True, "brand": brand, "model": model, "image_urls": urls}
+
 
 import csv, pathlib
 
@@ -233,6 +247,83 @@ def fetch_phone_gallery(brand: str, model: str, limit: int = 4) -> list[str]:
             seen.add(u); uniq.append(u)
     return uniq[:limit]
 
+def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[str]:
+    """
+    Fetches image URLs for a phone from the TechSpecs API.
+    Prioritizes front, back, and side views.
+    """
+    if not TECHSPECS_API_KEY:
+        print("[techspecs] API key not set.")
+        return []
+
+    headers = {
+        "X-API-Key": TECHSPECS_API_KEY,
+        "Content-Type": "application/json"
+    }
+    # TechSpecs API often requires a specific format for brand and model
+    # Let's assume a search endpoint for now, or a direct lookup if available
+    # Based on their docs, a search query might be the most flexible
+    search_query = f"{brand} {model}"
+    url = f"https://api.techspecs.io/v4/products/search" # This is a placeholder URL, need to verify TechSpecs API docs
+
+    try:
+        # This part needs to be adapted based on actual TechSpecs API documentation
+        # Assuming a POST request for search with a 'query' parameter
+        payload = {"query": search_query, "limit": 1} # Fetch one product to get its images
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Assuming the response structure contains a list of products, each with images
+        products = data.get("products", [])
+        if not products:
+            print(f"[techspecs] No products found for {brand} {model}")
+            return []
+
+        # Take the first product found
+        product = products[0]
+        images = product.get("images", [])
+
+        # Filter and prioritize images (front, back, side)
+        gallery_urls = []
+        # Simple heuristic: look for keywords in image URLs or labels
+        # This might need refinement based on actual TechSpecs image data
+        keywords = {"front": None, "back": None, "side": None}
+        for img in images:
+            img_url = img.get("url")
+            if not img_url:
+                continue
+            label = img.get("label", "").lower() or img_url.lower()
+
+            if "front" in label and not keywords["front"]:
+                keywords["front"] = img_url
+            elif "back" in label and not keywords["back"]:
+                keywords["back"] = img_url
+            elif "side" in label and not keywords["side"]:
+                keywords["side"] = img_url
+            else:
+                gallery_urls.append(img_url) # Add others to the general list
+
+        # Add prioritized images first
+        final_images = []
+        if keywords["front"]: final_images.append(keywords["front"])
+        if keywords["back"]: final_images.append(keywords["back"])
+        if keywords["side"]: final_images.append(keywords["side"])
+
+        # Add remaining images up to the limit
+        for img_url in gallery_urls:
+            if len(final_images) < limit:
+                final_images.append(img_url)
+            else:
+                break
+        return final_images[:limit]
+
+    except requests.exceptions.RequestException as e:
+        print(f"[techspecs] API request failed for {brand} {model}: {e}")
+    except Exception as e:
+        print(f"[techspecs] Error processing TechSpecs response for {brand} {model}: {e}")
+    return []
+
 
 
 # ------------------ YouTube live fetch + CSV cache ------------------
@@ -243,6 +334,7 @@ import pathlib, csv, time as _time
 from datetime import datetime, timedelta
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
+TECHSPECS_API_KEY = os.getenv("TECHSPECS_API_KEY", "").strip()
 
 _REVIEWS_CSV = pathlib.Path("data/processed/reviews.csv")
 _REVIEWS_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -1387,46 +1479,12 @@ def _idealo_search_url(brand: str, model: str) -> str:
     # generic search; user will click through; we only probe for lowPrice if allowed
     return f"https://www.{IDEALO_DOMAIN}/preisvergleich/MainSearchProductCategory.html?q={q}"
 
-def _probe_idealo_lowest(brand: str, model: str, timeout: int = 10) -> tuple[float | None, str | None]:
-    """
-    Best-effort: fetch search page and try to read a low price from JSON-LD blocks if present.
-    Returns (price_eur, click_url) or (None, search_url) if not available.
-    """
-    if not USE_IDEALO_LIVE:
-        return None, _idealo_search_url(brand, model)
-
-    import requests, re, json
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/123.0 Safari/537.36"
-    }
-    url = _idealo_search_url(brand, model)
-    try:
-        r = requests.get(url, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        # Look for JSON-LD with "lowPrice" (many list pages expose an AggregateOffer)
-        for m in re.finditer(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', r.text, re.S|re.I):
-            try:
-                data = json.loads(m.group(1))
-            except Exception:
-                continue
-            if isinstance(data, dict):
-                offers = data.get("offers")
-                if isinstance(offers, dict):
-                    low = offers.get("lowPrice")
-                    cur = offers.get("priceCurrency") or "EUR"
-                    if low:
-                        try:
-                            return float(str(low).replace(",", ".")), url
-                        except Exception:
-                            pass
-    except Exception as e:
-        print("[idealo] probe failed:", e)
-    return None, url
+def _probe_idealo_lowest(brand: str, model: str, timeout: int = 10) -> tuple[float | None, str | None]:\n    \"\"\"\n    Best-effort: fetch search page and try to read a low price from JSON-LD blocks if present.\n    Returns (price_eur, click_url) or (None, search_url) if not available.\n    \"\"\"\n    if not USE_IDEALO_LIVE:\n        return None, _idealo_search_url(brand, model)\n\n    import requests, re, json\n    headers = {\n        \"User-Agent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \"\n                      \"(KHTML, like Gecko) Chrome/123.0 Safari/537.36\"\n    }\n    url = _idealo_search_url(brand, model)\n    try:\n        r = requests.get(url, headers=headers, timeout=timeout)\n        r.raise_for_status()\n        # Look for JSON-LD with \"lowPrice\" (many list pages expose an AggregateOffer)\n        for m in re.finditer(r\'<script[^>]+type=[\"\\\']application/ld\\+json[\"\\\'][^>]*>(.*?)</script>\', r.text, re.S|re.I):\n            try:\n                data = json.loads(m.group(1))\n            except Exception:\n                continue\n            if isinstance(data, dict):\n                offers = data.get(\"offers\")\n                if isinstance(offers, dict):\n                    low = offers.get(\"lowPrice\")\n                    cur = offers.get(\"priceCurrency\") or \"EUR\"\n                    if low:\n                        try:\n                            return float(str(low).replace(\",\", \".\")), url\n                        except Exception:\n                            pass\n    except Exception as e:\n        print(\"[idealo] probe failed:\", e)\n    return None, url\n\ndef fetch_price_with_llm(brand: str, model: str) -> tuple[float | None, str | None]:\n    \"\"\"\n    Uses LLM to find the current price of a phone.\n    Returns (price_eur, search_url) or (None, None) if not available.\n    \"\"\"\n    if not USE_LLM:\n        return None, None\n\n    try:\n        prompt = (\n            f\"What is the current approximate retail price of the {brand} {model} phone in EUR? \"\n            \"Provide only the price as a number and the currency symbol (e.g., '799€'). \"\n            \"If you cannot find a price, respond with 'None'.\"\n        )\n        # Use the lighter Mixtral model as requested\n        response = chat_complete([{\"role\": \"user\", \"content\": prompt}], model=\"mixtral-8x7b\", max_tokens=50, temperature=0.1)\n\n        if response and response.strip().lower() != \"none\":\n            # Extract price and currency from the response\n            match = re.search(r\"(\d[\d\.,]*)\s*(€|eur|usd|\$)\", response, re.IGNORECASE)\n            if match:\n                price_str = match.group(1).replace(\",\", \".\")\n                currency = match.group(2).upper()\n                price = float(price_str)\n                # Convert to EUR if necessary (assuming LLM might return USD)\n                if currency == \"USD\":\n                    # EUR_PER_USD is defined globally in main.py\n                    price *= EUR_PER_USD\n                return price, f\"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}\"\n    except Exception as e:\n        print(f\"[LLM price] failed for {brand} {model}: {e}\")\n    return None, None
 
 
 import os
 from dxomark_live import cached_dxomark_rank
+from urllib.parse import quote_plus
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     picks: list[dict] = []
@@ -1491,10 +1549,11 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # --- Gallery (safe hotlinks) ---
+        # --- Gallery (TechSpecs API) ---
         try:
-            gallery_urls = fetch_phone_gallery(brand, model, limit=4)
+            gallery_urls = fetch_images_from_techspecs(brand, model, limit=3)
         except Exception as _e:
+            print(f"[gallery] TechSpecs fetch failed: {_e}")
             gallery_urls = []
 
         # --- Pros / Cons (YT + LLM + Reddit) ---
@@ -1539,19 +1598,19 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception:
                 return None
 
-        # --- PRICE / OFFER (Idealo -> Amazon -> MSRP) ---
+        # --- PRICE / OFFER (LLM -> Amazon -> MSRP) ---
         price_src = "unknown"
         price_val = None
         price_url = None
 
-        # 1) Idealo lowest (optional helper; safe fallback if missing)
-        try:
-            if "_probe_idealo_lowest" in globals() and callable(globals()["_probe_idealo_lowest"]):
-                p, idealo_url = _probe_idealo_lowest(brand, model)
+        # 1) LLM price fetch
+        if USE_LLM:
+            try:
+                p, llm_url = fetch_price_with_llm(brand, model)
                 if p:
-                    price_src, price_val, price_url = "idealo_low", float(p), idealo_url
-        except Exception as _e:
-            print("[price] idealo failed:", _e)
+                    price_src, price_val, price_url = "llm_search", float(p), llm_url
+            except Exception as _e:
+                print("[price] LLM failed:", _e)
 
         # 2) Amazon live
         if price_val is None:
