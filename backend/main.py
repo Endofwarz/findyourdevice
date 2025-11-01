@@ -115,6 +115,13 @@ def techspecs_image_test(brand: str, model: str):
     urls = fetch_images_from_techspecs(brand, model)
     return {"ok": True, "brand": brand, "model": model, "image_urls": urls}
 
+@app.get("/google_cse/image_test")
+def google_cse_image_test(brand: str, model: str):
+    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+        return {"ok": False, "reason": "GOOGLE_CSE_API_KEY or GOOGLE_CSE_CX not set"}
+    urls = fetch_images_from_google_cse(brand, model)
+    return {"ok": True, "brand": brand, "model": model, "image_urls": urls}
+
 
 import csv, pathlib
 
@@ -327,6 +334,48 @@ def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[
         print(f"[techspecs] Error processing TechSpecs response for {brand} {model}: {e}")
     return []
 
+def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list[str]:
+    """
+    Fetches image URLs for a phone from Google Custom Search Engine.
+    Prioritizes front, back, and side views.
+    """
+    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+        print("[google_cse] API key or CX not set.")
+        return []
+
+    base_url = "https://www.googleapis.com/customsearch/v1"
+    image_urls = []
+    search_terms = [f"{brand} {model} front", f"{brand} {model} back", f"{brand} {model} side"]
+
+    for term in search_terms:
+        params = {
+            "key": GOOGLE_CSE_API_KEY,
+            "cx": GOOGLE_CSE_CX,
+            "q": term,
+            "searchType": "image",
+            "num": 1, # Request only one image per search term
+            "imgSize": "large", # Prefer large images
+            "imgType": "photo", # Prefer photos
+        }
+        try:
+            response = requests.get(base_url, params=params, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+
+            items = data.get("items", [])
+            if items:
+                # Take the first image URL found
+                image_urls.append(items[0].get("link"))
+                if len(image_urls) >= limit:
+                    break
+        except requests.exceptions.RequestException as e:
+            print(f"[google_cse] API request failed for '{term}': {e}")
+        except Exception as e:
+            print(f"[google_cse] Error processing response for '{term}': {e}")
+
+    # Filter out any None values and return up to the limit
+    return [url for url in image_urls if url][:limit]
+
 
 
 # ------------------ YouTube live fetch + CSV cache ------------------
@@ -339,6 +388,8 @@ from datetime import datetime, timedelta
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 TECHSPECS_API_KEY = os.getenv("TECHSPECS_API_KEY", "").strip()
 TECHSPECS_API_ID = os.getenv("TECHSPECS_API_ID", "").strip()
+GOOGLE_CSE_API_KEY = os.getenv("GOOGLE_CSE_API_KEY", "").strip()
+GOOGLE_CSE_CX = os.getenv("GOOGLE_CSE_CX", "").strip()
 
 _REVIEWS_CSV = pathlib.Path("data/processed/reviews.csv")
 _REVIEWS_CSV.parent.mkdir(parents=True, exist_ok=True)
@@ -865,6 +916,7 @@ SESSIONS: Dict[str, Dict[str, Any]] = {}
 # Data loading (EUR only)
 # =========================
 _DF_CACHE: Optional[pd.DataFrame] = None
+_PRICES_CACHE: Optional[pd.DataFrame] = None # New global cache for prices
 
 EXPECTED_COLS = [
     "ID","Brand","Model","Slug","ReleaseYear","PriceEUR","DisplayInches",
@@ -890,7 +942,7 @@ def _price_fallback_eur(row: pd.Series) -> Optional[float]:
     return round(max(base, 110.0), 2)
 
 def load_df() -> pd.DataFrame:
-    global _DF_CACHE
+    global _DF_CACHE, _PRICES_CACHE # Declare global
     if _DF_CACHE is not None:
         return _DF_CACHE
     if not os.path.exists(CSV_PATH):
@@ -935,6 +987,7 @@ def load_df() -> pd.DataFrame:
             df[c] = df[c].astype(str).str.strip()
 
     _DF_CACHE = df
+    _PRICES_CACHE = load_prices_cache() # Load prices cache here
     return _DF_CACHE
 
 def safe_df() -> pd.DataFrame:
@@ -1527,6 +1580,7 @@ def llm_price_test_raw(brand: str, model: str):
 import os
 from dxomark_live import cached_dxomark_rank
 from urllib.parse import quote_plus
+from tools.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     picks: list[dict] = []
@@ -1591,11 +1645,11 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
         brand_key = brand.lower().replace(" ", "_")
         brand_logo = _public_url_if_exists(f"/brands/{brand_key}.png")
 
-        # --- Gallery (TechSpecs API) ---
+        # --- Gallery (Google Custom Search Engine) ---
         try:
-            gallery_urls = fetch_images_from_techspecs(brand, model, limit=3)
+            gallery_urls = fetch_images_from_google_cse(brand, model, limit=3)
         except Exception as _e:
-            print(f"[gallery] TechSpecs fetch failed: {_e}")
+            print(f"[gallery] Google CSE fetch failed: {_e}")
             gallery_urls = []
 
         # --- Pros / Cons (YT + LLM + Reddit) ---
@@ -1640,21 +1694,32 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception:
                 return None
 
-        # --- PRICE / OFFER (LLM -> Amazon -> MSRP) ---
+        # --- PRICE / OFFER (Cache -> LLM -> Amazon -> MSRP) ---
         price_src = "unknown"
         price_val = None
         price_url = None
 
-        # 1) LLM price fetch
-        if USE_LLM:
+        # 1) Price from cache
+        global _PRICES_CACHE
+        if _PRICES_CACHE is not None:
+            cached_price = _PRICES_CACHE[_PRICES_CACHE["slug"] == slug]
+            if not cached_price.empty:
+                price_val = cached_price["price"].iloc[0]
+                price_src = "cache"
+                price_url = f"https://www.google.com/search?q={quote_plus(f'{brand} {model} price')}" # Use a generic search URL
+
+        # 2) LLM price fetch (if not found in cache or cache is too old - handled by update_prices.py)
+        if price_val is None and USE_LLM:
             try:
                 p, llm_url = fetch_price_with_llm(brand, model)
                 if p:
                     price_src, price_val, price_url = "llm_search", float(p), llm_url
+                    # Optionally, update cache here if we want real-time cache updates
+                    # For now, assume cache is updated by the separate script
             except Exception as _e:
                 print("[price] LLM failed:", _e)
 
-        # 2) Amazon live
+        # 3) Amazon live
         if price_val is None:
             try:
                 amz = fetch_amazon_offer(brand, model)
@@ -1665,7 +1730,7 @@ def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
             except Exception as _e:
                 print("[price] amazon failed:", _e)
 
-        # 3) MSRP / CSV fallback
+        # 4) MSRP / CSV fallback
         if price_val is None:
             msrp_eur = fnum(row.get("PriceEUR"), float)
             if msrp_eur:
