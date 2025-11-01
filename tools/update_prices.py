@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from datetime import datetime, timedelta
 from backend.llm import chat_complete # Assuming backend.llm is accessible
-from backend.main import EUR_PER_USD # Assuming EUR_PER_USD is accessible
+from backend.config import EUR_PER_USD # Assuming EUR_PER_USD is accessible
 
 # --- Configuration ---
 PHONES_CSV_PATH = Path("data/processed/phones_clean.csv") # Or phones_gsma.csv

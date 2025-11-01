@@ -24,7 +24,8 @@ from fastapi import FastAPI, Request
 from fastapi import HTTPException, Query
 import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
-EUR_PER_USD = float(os.getenv("FX_EUR_PER_USD", "0.93"))
+# --- Constants ---
+from .config import EUR_PER_USD
 from reddit_live import reddit_search_pros_cons  # add at top
 from dxomark_live import fetch_dxomark_camera_rank
 USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"

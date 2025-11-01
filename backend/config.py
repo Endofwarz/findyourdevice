@@ -32,6 +32,7 @@ EBAY_APP_ID = os.getenv("EBAY_APP_ID", "")            # or OAuth if using Browse
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")          # for phone-specs/GSM Arena proxies
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")            # optional Google Shopping
 DEFAULT_CURRENCY = os.getenv("DEFAULT_CURRENCY", "USD")
+EUR_PER_USD = 0.93 # Static exchange rate
 
 # Cron cadence hint (minutes) for Render or external scheduler
 INGEST_CADENCE_MIN = int(os.getenv("INGEST_CADENCE_MIN", "360"))
