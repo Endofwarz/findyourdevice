@@ -1,4 +1,6 @@
 // frontend/src/components/ResultCards.jsx
+import React, { useState } from 'react';
+
 function clamp(n, lo, hi){ return Math.min(Math.max(n, lo), hi); }
 
 function estimatePrice(p){
@@ -64,7 +66,7 @@ function svgDataURL(label){
 function ensureImageURL(p){
   if (p.ImageURL && String(p.ImageURL).startsWith("data:")) return p.ImageURL;
   const label = `${p.Brand||""} ${p.Model||""}`.trim() || "Phone";
-  return p.ImageURL || svgDataURL(label);
+  return p.ImageURL || p.BrandLogo || svgDataURL(label);
 }
 
 function prosConsFromSpec(p){
@@ -89,10 +91,61 @@ function Price({ value }){
 }
 
 function Photo({ p }){
-  const url = ensureImageURL(p);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const gallery = p.Gallery || [];
+  let images = [];
+  if (gallery.length > 0) {
+    images = gallery;
+  } else if (p.ImageURL) {
+    images = [p.ImageURL];
+  } else if (p.BrandLogo) {
+    images = [p.BrandLogo];
+  }
+
+  const goToPrevious = () => {
+    const isFirstImage = currentIndex === 0;
+    const newIndex = isFirstImage ? images.length - 1 : currentIndex - 1;
+    setCurrentIndex(newIndex);
+  };
+
+  const goToNext = () => {
+    const isLastImage = currentIndex === images.length - 1;
+    const newIndex = isLastImage ? 0 : currentIndex + 1;
+    setCurrentIndex(newIndex);
+  };
+
+  const openModal = () => {
+    if (images.length > 0) {
+      setIsModalOpen(true);
+    }
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+  };
+
+  const url = images[currentIndex] || ensureImageURL(p);
+
   return (
-    <div className="w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100">
-      <img src={url} alt="" className="w-full h-full object-cover" />
+    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100">
+      <img src={url} alt={`${p.Brand} ${p.Model}`} className="w-full h-full object-cover cursor-pointer" onClick={openModal} />
+      {images.length > 1 && (
+        <>
+          <button onClick={goToPrevious} className="absolute top-1/2 left-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full">
+            &#10094;
+          </button>
+          <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full">
+            &#10095;
+          </button>
+        </>
+      )}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50" onClick={closeModal}>
+          <img src={url} alt={`${p.Brand} ${p.Model}`} className="max-w-full max-h-full" />
+        </div>
+      )}
     </div>
   );
 }

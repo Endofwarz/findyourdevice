@@ -351,9 +351,18 @@ def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list
 
     base_url = "https://www.googleapis.com/customsearch/v1"
     image_urls = []
-    search_terms = [f"{brand} {model} front", f"{brand} {model} back", f"{brand} {model} side"]
+    search_terms = [
+        f"{brand} {model} official render front white background",
+        f"{brand} {model} official render back white background",
+        f"{brand} {model} official render side white background",
+        f"{brand} {model} front",
+        f"{brand} {model} back",
+        f"{brand} {model} side",
+    ]
 
     for term in search_terms:
+        if len(image_urls) >= limit:
+            break
         params = {
             "key": GOOGLE_CSE_API_KEY,
             "cx": GOOGLE_CSE_CX,
@@ -372,8 +381,7 @@ def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list
             if items:
                 # Take the first image URL found
                 image_urls.append(items[0].get("link"))
-                if len(image_urls) >= limit:
-                    break
+
         except requests.exceptions.RequestException as e:
             print(f"[google_cse] API request failed for '{term}': {e}")
         except Exception as e:
