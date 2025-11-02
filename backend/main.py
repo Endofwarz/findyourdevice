@@ -1,15 +1,12 @@
 from __future__ import annotations
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from amazon_live import fetch_amazon_offer
-from dxomark_live import cached_dxomark_rank
+from .amazon_live import fetch_amazon_offer
+from .dxomark_live import cached_dxomark_rank
 from urllib.parse import quote_plus
 from tools.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
-from gsma_scraper import fetch_specs_live, fetch_price_live, fetch_gallery_urls
+from .gsma_scraper import fetch_specs_live, fetch_price_live, fetch_gallery_urls
 import traceback
-from gsma_scraper import fetch_specs_live, ScrapeError
-from config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
+from .gsma_scraper import ScrapeError
+from .config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
 import random
 if DEMO_SEED:
     try: random.seed(int(DEMO_SEED))
@@ -26,8 +23,8 @@ import time as _time  # safe alias; we also use _time for yt sleeps
 DIAG = os.getenv("DIAG", "1") == "1"   # turn off by setting DIAG=0
 # --- Constants ---
 from .config import EUR_PER_USD
-from reddit_live import reddit_search_pros_cons  # add at top
-from dxomark_live import fetch_dxomark_camera_rank
+from .reddit_live import reddit_search_pros_cons  # add at top
+from .dxomark_live import fetch_dxomark_camera_rank
 USE_REDDIT_LIVE = os.getenv("USE_REDDIT_LIVE", "1") == "1"
 USE_DXOMARK_LIVE = os.getenv("USE_DXOMARK_LIVE", "1") == "1"
 
@@ -54,8 +51,8 @@ def _client_ip(request: Request) -> str:
 
 app = FastAPI(title="Phone Finder API", version="2.0")
 
-from llm import chat_complete
-from prompts import blurb_messages, pros_cons_messages
+from .llm import chat_complete
+from .prompts import blurb_messages, pros_cons_messages
 ALLOWED_ORIGINS = [
   "http://127.0.0.1:5173",
   "http://localhost:5173",
@@ -77,7 +74,7 @@ from pydantic import BaseModel
 from fastapi import Request
 
 from fastapi import FastAPI
-from reddit_live import reddit_diag, reddit_search_pros_cons
+from .reddit_live import reddit_diag, reddit_search_pros_cons
 
 app = FastAPI()
 
@@ -95,7 +92,7 @@ def reddit_test_api(brand: str, model: str):
         return {"ok": False, "error": str(e)}
 
 # near other imports
-from dxomark_live import fetch_dxomark_camera_rank, diag_dxomark
+from .dxomark_live import fetch_dxomark_camera_rank, diag_dxomark
 
 # --- quick test/diag endpoints ---
 @app.get("/dxo/test")
@@ -172,7 +169,7 @@ PHONES_CSV = os.getenv("PHONES_CSV", GSMA_OUT if os.path.exists(GSMA_OUT)
 def _seed_gsma_if_missing():
     try:
         if os.getenv("IMPORT_ON_BOOT", "1") == "1" and not os.path.exists(GSMA_OUT):
-            from gsma_scraper import bootstrap_import
+            from .gsma_scraper import bootstrap_import
             brands = os.getenv("GSMA_BRANDS", "Apple,Samsung,Google,OnePlus,Sony,Motorola,Nothing").strip()
             min_year = int(os.getenv("GSMA_MIN_YEAR", "2023"))
             print(f"[startup] building GSMA CSV for: {brands} (>= {min_year})")
@@ -790,7 +787,7 @@ app.add_middleware(
 
 # near other imports
 from fastapi import HTTPException, Query
-from gsma_scraper import fetch_brand_since, ScrapeError
+from .gsma_scraper import fetch_brand_since, ScrapeError
 import pandas as pd, pathlib, csv, os
 
 @app.get("/import/gsma/ping")
@@ -845,7 +842,7 @@ def import_gsma_brand(
     if not os.getenv("ALLOW_SCRAPERS", "0") == "1":
         raise HTTPException(status_code=403, detail="Scraping disabled (set ALLOW_SCRAPERS=1).")
     # lazy import so module load never fails
-    from gsma_scraper import fetch_brand_since
+    from .gsma_scraper import fetch_brand_since
     rows = fetch_brand_since(brand=brand, min_year=min_year)
 
     try:
@@ -888,7 +885,7 @@ def import_gsma_brand(
 @app.get("/import/gsma/probe")
 def import_gsma_probe(brand: str):
     try:
-        from gsma_scraper import find_brand_url
+        from .gsma_scraper import find_brand_url
         url = find_brand_url(brand)
         return {"ok": True, "brand": brand, "brand_url": url}
     except Exception as e:
@@ -1308,7 +1305,7 @@ def best_offer_for_slug(slug: str) -> dict | None:
                     }
     return best
 
-from gsma_scraper import fetch_specs_live  # <-- add at top of file
+from .gsma_scraper import fetch_specs_live  # <-- add at top of file
 
 def _direct_results_response(session_id: str, intent: dict, skipped: set | None = None) -> ChatMessageResp:
     """Build results strictly from current intent with budget hard-guard and a personalized blurb."""
@@ -1522,11 +1519,11 @@ def _reddit_signals_for_phone(slug: str, brand: str, model: str) -> tuple[list[s
     return [], []
 
 import os
-from dxomark_live import fetch_dxomark_camera_rank
+from .dxomark_live import fetch_dxomark_camera_rank
 
 # optional shim so a missing reddit helper won’t crash:
 try:
-    from reddit_live import reddit_search_pros_cons as _reddit_search_pros_cons
+    from .reddit_live import reddit_search_pros_cons as _reddit_search_pros_cons
 except Exception:
     def _reddit_search_pros_cons(*_args, **_kwargs):  # (slug, brand, model) -> (pros, cons)
         return [], []
@@ -1584,9 +1581,9 @@ def llm_price_test_raw(brand: str, model: str):
 
 
 import os
-from dxomark_live import cached_dxomark_rank
+
 from urllib.parse import quote_plus
-from .update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
+from tools.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
 
 def _build_picks_from_df(d: pd.DataFrame, intent: dict) -> list[dict]:
     picks: list[dict] = []
@@ -1885,7 +1882,7 @@ def yt_debug(slug: str, brand: str, model: str):
 
 @app.get("/config/status")
 def config_status():
-    from config import USE_LLM, PHONES_CSV
+    from .config import USE_LLM, PHONES_CSV
     return {
         "use_llm": bool(USE_LLM),
         "diag": bool(DIAG),
