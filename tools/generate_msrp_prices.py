@@ -9,7 +9,7 @@ import google.generativeai as genai
 
 # IMPORTANT: Configure your Gemini API key here.
 # You can get a key from https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+GEMINI_API_KEY = "AIzaSyAEL1gcVE0TDO2D3JG7nQXXRQxUOW1jlSU"
 
 def get_msrp_from_gemini(brand, model):
     """
@@ -20,7 +20,7 @@ def get_msrp_from_gemini(brand, model):
         return None
 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.0-pro')
 
     prompt = f"What is the Manufacturer's Suggested Retail Price (MSRP) of the {brand} {model} in EUR? Please provide only the price as a number (e.g., 799.99)."
     try:
