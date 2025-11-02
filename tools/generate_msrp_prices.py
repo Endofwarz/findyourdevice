@@ -9,7 +9,23 @@ import google.generativeai as genai
 
 # IMPORTANT: Configure your Gemini API key here.
 # You can get a key from https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "AIzaSyAEL1gcVE0TDO2D3JG7nQXXRQxUOW1jlSU"
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+
+def list_models():
+    """Lists available Gemini models."""
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY":
+        print("Error: Gemini API key not configured.")
+        return False
+    genai.configure(api_key=GEMINI_API_KEY)
+    print("Available models:")
+    models_found = False
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods:
+            print(m.name)
+            models_found = True
+    if not models_found:
+        print("No models found that support generateContent.")
+    return models_found
 
 def get_msrp_from_gemini(brand, model):
     """
@@ -39,6 +55,9 @@ def generate_msrp_prices():
     """
     Generates a CSV file with MSRP prices for phones from 2023 onwards.
     """
+    if not list_models():
+        return
+
     # Load the phones dataset
     try:
         df = pd.read_csv("data/processed/phones_clean.csv")
