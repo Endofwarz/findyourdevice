@@ -343,7 +343,7 @@ def fetch_images_from_techspecs(brand: str, model: str, limit: int = 3) -> list[
 def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list[str]:
     """
     Fetches image URLs for a phone from Google Custom Search Engine.
-    Prioritizes front, back, and side views.
+    Prioritizes gsmarena.com, then falls back to general search.
     """
     if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
         print("[google_cse] API key or CX not set.")
@@ -351,13 +351,11 @@ def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list
 
     base_url = "https://www.googleapis.com/customsearch/v1"
     image_urls = []
+    
+    # Prioritize gsmarena.com
     search_terms = [
-        f"{brand} {model} official render front white background",
-        f"{brand} {model} official render back white background",
-        f"{brand} {model} official render side white background",
-        f"{brand} {model} front",
-        f"{brand} {model} back",
-        f"{brand} {model} side",
+        f"{brand} {model} site:gsmarena.com",
+        f"{brand} {model}",
     ]
 
     for term in search_terms:
@@ -368,9 +366,9 @@ def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list
             "cx": GOOGLE_CSE_CX,
             "q": term,
             "searchType": "image",
-            "num": 1, # Request only one image per search term
-            "imgSize": "large", # Prefer large images
-            "imgType": "photo", # Prefer photos
+            "num": limit, # Request more images to have a better selection
+            "imgSize": "large",
+            "imgType": "photo",
         }
         try:
             response = requests.get(base_url, params=params, timeout=5)
@@ -378,9 +376,9 @@ def fetch_images_from_google_cse(brand: str, model: str, limit: int = 3) -> list
             data = response.json()
 
             items = data.get("items", [])
-            if items:
-                # Take the first image URL found
-                image_urls.append(items[0].get("link"))
+            for item in items:
+                if len(image_urls) < limit:
+                    image_urls.append(item.get("link"))
 
         except requests.exceptions.RequestException as e:
             print(f"[google_cse] API request failed for '{term}': {e}")

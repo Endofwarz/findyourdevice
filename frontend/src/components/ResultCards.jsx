@@ -1,5 +1,5 @@
 // frontend/src/components/ResultCards.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 function clamp(n, lo, hi){ return Math.min(Math.max(n, lo), hi); }
 
@@ -90,27 +90,32 @@ function Price({ value }){
   return <span>${Number(value).toFixed(0)}</span>;
 }
 
-function Photo({ p }){
+function Photo({ p }) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [images, setImages] = useState([]);
 
-  const gallery = p.Gallery || [];
-  let images = [];
-  if (gallery.length > 0) {
-    images = gallery;
-  } else if (p.ImageURL) {
-    images = [p.ImageURL];
-  } else if (p.BrandLogo) {
-    images = [p.BrandLogo];
-  }
+  useEffect(() => {
+    const initialImages = p.Gallery?.length ? p.Gallery : (p.ImageURL ? [p.ImageURL] : (p.BrandLogo ? [p.BrandLogo] : []));
+    setImages(initialImages);
+    setCurrentIndex(0);
+  }, [p.Gallery, p.ImageURL, p.BrandLogo]);
 
-  const goToPrevious = () => {
+  const handleImageError = (e) => {
+    // If an image fails to load, remove it from the gallery
+    const newImages = images.filter(img => img !== e.target.src);
+    setImages(newImages);
+  };
+
+  const goToPrevious = (e) => {
+    e.stopPropagation();
     const isFirstImage = currentIndex === 0;
     const newIndex = isFirstImage ? images.length - 1 : currentIndex - 1;
     setCurrentIndex(newIndex);
   };
 
-  const goToNext = () => {
+  const goToNext = (e) => {
+    e.stopPropagation();
     const isLastImage = currentIndex === images.length - 1;
     const newIndex = isLastImage ? 0 : currentIndex + 1;
     setCurrentIndex(newIndex);
@@ -126,24 +131,30 @@ function Photo({ p }){
     setIsModalOpen(false);
   };
 
-  const url = images[currentIndex] || ensureImageURL(p);
+  const currentUrl = images[currentIndex] || ensureImageURL(p);
 
   return (
-    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100">
-      <img src={url} alt={`${p.Brand} ${p.Model}`} className="w-full h-full object-cover cursor-pointer" onClick={openModal} />
+    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100" onClick={openModal}>
+      <img src={currentUrl} alt={`${p.Brand} ${p.Model}`} className="w-full h-full object-cover cursor-pointer" onError={handleImageError} />
       {images.length > 1 && (
         <>
-          <button onClick={goToPrevious} className="absolute top-1/2 left-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full">
+          <button onClick={goToPrevious} className="absolute top-1/2 left-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
             &#10094;
           </button>
-          <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full">
+          <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
             &#10095;
           </button>
+          <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex space-x-2">
+            {images.map((_, index) => (
+              <div key={index} className={`w-2 h-2 rounded-full ${currentIndex === index ? 'bg-white' : 'bg-gray-400'}`}></div>
+            ))}
+          </div>
         </>
       )}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50" onClick={closeModal}>
-          <img src={url} alt={`${p.Brand} ${p.Model}`} className="max-w-full max-h-full" />
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50" onClick={closeModal}>
+          <button onClick={(e) => { e.stopPropagation(); closeModal(); }} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
+          <img src={currentUrl} alt={`${p.Brand} ${p.Model}`} className="max-w-[90vw] max-h-[90vh] object-contain" />
         </div>
       )}
     </div>
