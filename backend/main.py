@@ -6,7 +6,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from backend.dxomark_live import cached_dxomark_rank
 from urllib.parse import quote_plus
 from tools.update_prices import load_prices_cache, save_prices_cache, fetch_price_via_llm_for_update
-from backend.gsma_scraper import fetch_specs_live, fetch_gallery_urls
+from backend.gsma_scraper import fetch_specs_live
 import traceback
 from backend.gsma_scraper import ScrapeError
 from backend.config import PHONES_CSV, USE_LLM, ALLOW_SCRAPERS, DEMO_SEED
