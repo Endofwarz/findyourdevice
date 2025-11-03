@@ -1,76 +1,12 @@
 # backend/gsma_scraper.py
 from __future__ import annotations
-import re, requests
-from bs4 import BeautifulSoup
-PRICE_RE = re.compile(r"(?:about|around)?\s*([€$£])\s?([0-9][0-9.,]*)", re.I)
+
 import re
 import time
 from typing import Dict, List, Optional
 
 import httpx
 from bs4 import BeautifulSoup
-
-
-def fetch_price_live(brand: str, model: str) -> dict | None:
-    """
-    Returns {"currency": "EUR"/"USD"/"GBP", "amount": float} when found on GSMArena.
-    Looks in the 'Price' / 'Prices' field on the phone's page.
-    """
-    try:
-        url = find_model_url(brand, model)  # you already have find_* helpers; reuse the one that builds the model URL
-        if not url:
-            return None
-        html = requests.get(url, timeout=12).text
-        soup = BeautifulSoup(html, "html.parser")
-
-        # try Price row
-        price_text = None
-        for tr in soup.select("table#specs-list tr"):
-            th = (tr.find("th") or {}).get_text(" ", strip=True).lower()
-            if th in ("price", "prices"):
-                price_text = (tr.find("td") or {}).get_text(" ", strip=True)
-                break
-        if not price_text:
-            return None
-
-        m = PRICE_RE.search(price_text)
-        if not m:
-            return None
-        sym, num = m.group(1), m.group(2)
-        amt = float(num.replace(",", "").replace(" ", ""))
-        ccy = {"€": "EUR", "$": "USD", "£": "GBP"}.get(sym, "EUR")
-        return {"currency": ccy, "amount": amt}
-    except Exception:
-        return None
-
-def fetch_gallery_urls(brand: str, model: str, max_images: int = 6) -> list[str]:
-    """
-    Returns a list of full-size image URLs from GSMArena gallery if available.
-    """
-    urls = []
-    try:
-        page = find_model_url(brand, model)
-        if not page:
-            return urls
-        html = requests.get(page, timeout=12).text
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Big picture urls are usually in <img src="https://fdn2.gsmarena.com/vv/bigpic/....jpg">
-        for img in soup.select("img"):
-            src = img.get("src") or ""
-            if "gsmarena.com/vv/bigpic/" in src:
-                urls.append(src)
-        # de-dup & cap
-        out, seen = [], set()
-        for u in urls:
-            if u not in seen:
-                seen.add(u)
-                out.append(u)
-                if len(out) >= max_images:
-                    break
-        return out
-    except Exception:
-        return []
 
 # ---------- Constants / Globals ----------
 
@@ -124,55 +60,72 @@ def _get_html(url: str) -> str:
 def _soup(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, _BS_PARSER)
 
-
-# ---------- Parsing helpers ----------
+# --- finder helpers (replace the old ones) ---
+def _brand_url(brand: str) -> str:
+    html = _get_html(f"{BASE}/makers.php3")
+    soup = _soup(html)
+    for a in soup.select("a[href*='-phones-']"):
+        name = (a.get_text() or "").strip().lower()
+        href = (a.get("href") or "").strip()
+        if brand.lower() in name and href.endswith(".php"):
+            return f"{BASE}/{href}"
+    raise ValueError(f"Brand not found: {brand}")
 
 def _search_phone_url(brand: str, model: str) -> str | None:
     # GSMA search: res.php3?sSearch=...
     q = f"{brand} {model}".strip()
     html = _get_html(f"{BASE}/res.php3?sSearch={requests.utils.quote(q)}")
     soup = _soup(html)
-    
-    best_match_url = None
-    highest_score = -1
-
-    model_lower = model.lower()
-    model_words = set(model_lower.split())
-
     for a in soup.select("div.makers a[href*='.php']"):
         href = (a.get("href") or "").strip()
         title = (a.get_text(" ") or "").strip().lower()
-        
-        current_score = 0
-
-        # Prioritize exact match of the model name in the title
-        if model_lower == title:
-            current_score = 100 # Highest score for exact match
-        elif model_lower in title:
-            current_score = 80 # High score if model is a substring of title
-        
-        # Check word overlap and penalize extra words
-        title_words = set(title.split())
-        if model_words.issubset(title_words):
-            current_score += len(model_words) * 5 # Reward for word overlap
-            extra_words = title_words - model_words
-            # Penalize for too many extra words, but allow common suffixes
-            if len(extra_words) > 0:
-                common_suffixes = {"5g", "ultra", "plus", "fe", "pro", "max"}
-                non_common_extra_words = extra_words - common_suffixes
-                current_score -= len(non_common_extra_words) * 10
-
-        # If the brand is not in the title, it's likely a bad match
-        if brand.lower() not in title:
-            current_score -= 50
-
-        if current_score > highest_score:
-            highest_score = current_score
-            best_match_url = href
-
-    if best_match_url and highest_score >= 50: # Only consider matches with a reasonable score
-        return f"{BASE}/{best_match_url}"
+        if brand.lower() in title and model.lower() in title:
+            return f"{BASE}/{href}"
+    # accept first reasonable hit if exact not found
+    a = soup.select_one("div.makers a[href*='.php']")
+    if a:
+        return f"{BASE}/{a.get('href').strip()}"
     return None
+
+def _find_phone_page(brand: str, model: str) -> str | None:
+    # 1) try brand listing
+    try:
+        brand_url = _brand_url(brand)
+        html = _get_html(brand_url)
+        soup = _soup(html)
+        for a in soup.select("div.makers a[href*='.php']"):
+            title = (a.get_text(" ") or "").strip().lower()
+            href = (a.get("href") or "").strip()
+            if model.lower() in title:
+                return f"{BASE}/{href}"
+    except Exception:
+        pass
+    # 2) fallback to site search
+    return _search_phone_url(brand, model)
+
+
+
+# ---------- Parsing helpers ----------
+
+def _brand_listing_url(brand: str) -> str:
+    """
+    Resolve brand -> /apple-phones-48.php via makers directory.
+    """
+    makers_html = _get_html(f"{BASE}/makers.php3")
+    soup = _soup(makers_html)
+    want = brand.strip().lower()
+
+    # links look like: <a href="apple-phones-48.php"><strong>Apple</strong> devices ...</a>
+    for a in soup.select("table tr td a"):
+        name = (a.get_text(" ") or "").strip().lower()
+        href = (a.get("href") or "").strip()
+        if not href.endswith(".php"):
+            continue
+        if want in name:
+            return f"{BASE}/{href}"
+
+    raise ScrapeError(f"brand not found in makers list: {brand}")
+
 
 def _parse_phone_cards(listing_html: str) -> List[Dict[str, str]]:
     """
