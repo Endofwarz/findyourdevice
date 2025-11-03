@@ -634,20 +634,11 @@ function Gallery({ urls = [], brand, model }) {
           <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
             &#10095;
           </button>
-          <div className="absolute bottom-2 left-0 right-0 p-2 overflow-x-auto whitespace-nowrap">
-            <div className="flex space-x-2 justify-center">
-            {images.map((img, index) => (
-              <img key={index} src={img} alt={`Thumbnail ${index + 1}`} 
-                   className={`w-12 h-12 object-cover rounded-md cursor-pointer border-2 ${currentIndex === index ? 'border-blue-500' : 'border-transparent'}`} 
-                   onClick={(e) => { e.stopPropagation(); setCurrentIndex(index); }} />
-            ))}
-            </div>
-          </div>
         </>
       )}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50" onClick={closeModal}>
-          <button onClick={(e) => { e.stopPropagation(); closeModal(); }} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
+          <button onClick={closeModal} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
           <img src={currentUrl} alt={`${brand} ${model}`} className="max-w-[90vw] max-h-[90vh] object-contain" onClick={closeModal} />
         </div>
       )}
@@ -1018,7 +1009,7 @@ function FlippableCard({
           }`}
         >
           {/* FRONT */}
-          <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center [backface-visibility:hidden]">
+          <div className="grid md:grid-cols-[320px,1fr] gap-6 items-center [backface-visibility:hidden]">
             <div className="mx-auto w-full">
               <PhoneImage
                 localSrc={pick?.ImageLocal}
