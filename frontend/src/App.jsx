@@ -174,6 +174,24 @@ function buildMarketplaceLinks(brand, model) {
 
 
 
+function svgDataURL(label){
+  const safe = (label || "Phone").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const gradA = "#111827", gradB = "#1f2937";
+  const svg = `
+<svg xmlns='http://www.w3.org/2000/svg' width='640' height='400'>
+  <defs>
+    <linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+      <stop offset='0%' stop-color='${gradA}' />
+      <stop offset='100%' stop-color='${gradB}' />
+    </linearGradient>
+  </defs>
+  <rect width='100%' height='100%' fill='url(#g)'/>
+  <text x='50%' y='50%' text-anchor='middle' dominant-baseline='middle'
+        font-family='Inter, Segoe UI, Arial, sans-serif' font-size='28' fill='white'>${safe}</text>
+</svg>`;
+  return "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
+}
+
 /* ------------------------- session hook ------------------------- */
 function useSession() {
   const [sid, setSid] = useState(null);
@@ -547,40 +565,93 @@ function CategoryCard({ title, onClick, disabled }) {
   );
 }
 
-function Gallery({ urls = [] }) {
-  const [open, setOpen] = React.useState(false);
-  const [idx, setIdx] = React.useState(0);
-  if (!urls || urls.length === 0) return null;
+function Gallery({ urls = [], brand, model }) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [images, setImages] = useState([]);
+
+  useEffect(() => {
+    const initialImages = urls.length ? urls : [];
+    setImages(initialImages);
+    setCurrentIndex(0);
+  }, [urls]);
+
+  const handleImageError = (e) => {
+    // If an image fails to load, remove it from the gallery
+    const newImages = images.filter(img => img !== e.target.src);
+    setImages(newImages);
+  };
+
+  const goToPrevious = (e) => {
+    e.stopPropagation();
+    const isFirstImage = currentIndex === 0;
+    const newIndex = isFirstImage ? images.length - 1 : currentIndex - 1;
+    setCurrentIndex(newIndex);
+  };
+
+  const goToNext = (e) => {
+    e.stopPropagation();
+    const isLastImage = currentIndex === images.length - 1;
+    const newIndex = isLastImage ? 0 : currentIndex + 1;
+    setCurrentIndex(newIndex);
+  };
+
+  const openModal = () => {
+    if (images.length > 0) {
+      setIsModalOpen(true);
+    }
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+  };
+
+  useEffect(() => {
+    const handleEsc = (event) => {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+
+    return () => {
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, []);
+
+  const currentUrl = images[currentIndex] || (brand && model ? svgDataURL(`${brand} ${model}`) : svgDataURL("Phone"));
+
+  if (!images || images.length === 0) return null;
 
   return (
-    <>
-      <div className="mt-3 flex gap-2">
-        {urls.slice(0, 4).map((u, i) => (
-          <button
-            key={i}
-            className="rounded-xl overflow-hidden border border-slate-200 hover:shadow"
-            onClick={() => { setIdx(i); setOpen(true); }}
-            title="Open photo"
-          >
-            <img src={u} alt="" className="h-14 w-14 object-cover" loading="lazy" />
+    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100" onClick={openModal}>
+      <img src={currentUrl} alt={`${brand} ${model}`} className="w-full h-full object-cover cursor-pointer" onError={handleImageError} />
+      {images.length > 1 && (
+        <>
+          <button onClick={goToPrevious} className="absolute top-1/2 left-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
+            &#10094;
           </button>
-        ))}
-      </div>
-
-      {open && (
-        <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setOpen(false)}
-        >
-          <img
-            src={urls[idx]}
-            alt=""
-            className="max-h-[85vh] max-w-[90vw] rounded-2xl shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
+            &#10095;
+          </button>
+          <div className="absolute bottom-2 left-0 right-0 p-2 overflow-x-auto whitespace-nowrap">
+            <div className="flex space-x-2 justify-center">
+            {images.map((img, index) => (
+              <img key={index} src={img} alt={`Thumbnail ${index + 1}`} 
+                   className={`w-12 h-12 object-cover rounded-md cursor-pointer border-2 ${currentIndex === index ? 'border-blue-500' : 'border-transparent'}`} 
+                   onClick={(e) => { e.stopPropagation(); setCurrentIndex(index); }} />
+            ))}
+            </div>
+          </div>
+        </>
+      )}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50" onClick={closeModal}>
+          <button onClick={(e) => { e.stopPropagation(); closeModal(); }} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
+          <img src={currentUrl} alt={`${brand} ${model}`} className="max-w-[90vw] max-h-[90vh] object-contain" onClick={closeModal} />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -898,27 +969,6 @@ function BulletList({ items = [], pick, isCon = false }) {
 
 
 /* ---- Results ---- */
-function PhoneImage({ localSrc, remoteSrc, brandLogo, alt }) {
-  const isLogo = !!brandLogo && !localSrc && !remoteSrc;
-  const src = localSrc || remoteSrc || brandLogo || null;
-
-  return (
-    <div className={`w-full h-56 rounded-2xl flex items-center justify-center p-4
-      ${isLogo ? "bg-white border-2 border-indigo-100" : "bg-slate-100"}`}>
-      {src ? (
-        <img
-          src={src}
-          alt={alt || ""}
-          className="max-h-full max-w-full object-contain"
-          loading="lazy"
-        />
-      ) : (
-        <div className="text-slate-400">{alt || "No image"}</div>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Flippable phone card ---------- */
 function FlippableCard({
   pick,
@@ -1203,16 +1253,7 @@ function ResultsView({ picks, blurb }) {
 
               <div className="grid md:grid-cols-[260px,1fr] gap-6 items-center">
                 <div className="mx-auto w-full">
-                  <PhoneImage
-                    localSrc={featured?.ImageLocal}
-                    remoteSrc={featured?.ImageURL}
-                    brandLogo={featured?.BrandLogo}
-                    alt={`${featured?.Brand ?? ""} ${featured?.Model ?? ""}`}
-                  />
-                  {/* Gallery thumbnails (if provided by backend) */}
-                  {Array.isArray(featured?.Gallery) && featured.Gallery.length > 0 && (
-                    <Gallery urls={featured.Gallery} />
-                  )}
+                  <Gallery urls={featured.Gallery} brand={featured?.Brand} model={featured?.Model} />
                 </div>
 
                 <div>
@@ -1312,12 +1353,7 @@ function ResultsView({ picks, blurb }) {
                 </span>
               </div>
 
-              <PhoneImage
-                localSrc={p?.ImageLocal}
-                remoteSrc={p?.ImageURL}
-                brandLogo={p?.BrandLogo}
-                alt={`${p?.Brand ?? ""} ${p?.Model ?? ""}`}
-              />
+              <Gallery urls={p.Gallery} brand={p?.Brand} model={p?.Model} />
 
               <div className="mt-3">
                 <div className="text-lg font-semibold">
