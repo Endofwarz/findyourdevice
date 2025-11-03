@@ -131,6 +131,19 @@ function Photo({ p }) {
     setIsModalOpen(false);
   };
 
+  useEffect(() => {
+    const handleEsc = (event) => {
+      if (event.key === 'Escape') {
+        closeModal();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+
+    return () => {
+      window.removeEventListener('keydown', handleEsc);
+    };
+  }, []);
+
   const currentUrl = images[currentIndex] || ensureImageURL(p);
 
   return (
@@ -144,10 +157,14 @@ function Photo({ p }) {
           <button onClick={goToNext} className="absolute top-1/2 right-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
             &#10095;
           </button>
-          <div className="absolute bottom-2 left-1/2 transform -translate-x-1/2 flex space-x-2">
-            {images.map((_, index) => (
-              <div key={index} className={`w-2 h-2 rounded-full ${currentIndex === index ? 'bg-white' : 'bg-gray-400'}`}></div>
+          <div className="absolute bottom-2 left-0 right-0 p-2 overflow-x-auto whitespace-nowrap">
+            <div className="flex space-x-2 justify-center">
+            {images.map((img, index) => (
+              <img key={index} src={img} alt={`Thumbnail ${index + 1}`} 
+                   className={`w-12 h-12 object-cover rounded-md cursor-pointer border-2 ${currentIndex === index ? 'border-blue-500' : 'border-transparent'}`} 
+                   onClick={(e) => { e.stopPropagation(); setCurrentIndex(index); }} />
             ))}
+            </div>
           </div>
         </>
       )}
