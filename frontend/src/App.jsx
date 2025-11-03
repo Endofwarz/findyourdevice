@@ -624,7 +624,7 @@ function Gallery({ urls = [], brand, model }) {
   if (!images || images.length === 0) return null;
 
   return (
-    <div className="relative w-full aspect-[16/10] overflow-hidden rounded-xl bg-slate-100" onClick={openModal}>
+    <div className="relative w-full aspect-square overflow-hidden rounded-xl bg-slate-100" onClick={openModal}>
       <img src={currentUrl} alt={`${brand} ${model}`} className="w-full h-full object-cover cursor-pointer" onError={handleImageError} />
       {images.length > 1 && (
         <>

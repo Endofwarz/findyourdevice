@@ -127,47 +127,52 @@ def _soup(html: str) -> BeautifulSoup:
 
 # ---------- Parsing helpers ----------
 
-def _brand_listing_url(brand: str) -> str:
-    html = _get_html(f"{BASE}/makers.php3")
-    soup = _soup(html)
-    for a in soup.select("a[href*='-phones-']"):
-        name = (a.get_text() or "").strip().lower()
-        href = (a.get("href") or "").strip()
-        if brand.lower() in name and href.endswith(".php"):
-            return f"{BASE}/{href}"
-    raise ValueError(f"Brand not found: {brand}")
-
 def _search_phone_url(brand: str, model: str) -> str | None:
     # GSMA search: res.php3?sSearch=...
     q = f"{brand} {model}".strip()
     html = _get_html(f"{BASE}/res.php3?sSearch={requests.utils.quote(q)}")
     soup = _soup(html)
+    
+    best_match_url = None
+    highest_score = -1
+
+    model_lower = model.lower()
+    model_words = set(model_lower.split())
+
     for a in soup.select("div.makers a[href*='.php']"):
         href = (a.get("href") or "").strip()
         title = (a.get_text(" ") or "").strip().lower()
-        if brand.lower() in title and model.lower() in title:
-            return f"{BASE}/{href}"
-    # accept first reasonable hit if exact not found
-    a = soup.select_one("div.makers a[href*='.php']")
-    if a:
-        return f"{BASE}/{a.get('href').strip()}"
-    return None
+        
+        current_score = 0
 
-def _find_phone_page(brand: str, model: str) -> str | None:
-    # 1) try brand listing
-    try:
-        brand_url = _brand_url(brand)
-        html = _get_html(brand_url)
-        soup = _soup(html)
-        for a in soup.select("div.makers a[href*='.php']"):
-            title = (a.get_text(" ") or "").strip().lower()
-            href = (a.get("href") or "").strip()
-            if model.lower() in title:
-                return f"{BASE}/{href}"
-    except Exception:
-        pass
-    # 2) fallback to site search
-    return _search_phone_url(brand, model)
+        # Prioritize exact match of the model name in the title
+        if model_lower == title:
+            current_score = 100 # Highest score for exact match
+        elif model_lower in title:
+            current_score = 80 # High score if model is a substring of title
+        
+        # Check word overlap and penalize extra words
+        title_words = set(title.split())
+        if model_words.issubset(title_words):
+            current_score += len(model_words) * 5 # Reward for word overlap
+            extra_words = title_words - model_words
+            # Penalize for too many extra words, but allow common suffixes
+            if len(extra_words) > 0:
+                common_suffixes = {"5g", "ultra", "plus", "fe", "pro", "max"}
+                non_common_extra_words = extra_words - common_suffixes
+                current_score -= len(non_common_extra_words) * 10
+
+        # If the brand is not in the title, it's likely a bad match
+        if brand.lower() not in title:
+            current_score -= 50
+
+        if current_score > highest_score:
+            highest_score = current_score
+            best_match_url = href
+
+    if best_match_url and highest_score >= 50: # Only consider matches with a reasonable score
+        return f"{BASE}/{best_match_url}"
+    return None
 
 def _parse_phone_cards(listing_html: str) -> List[Dict[str, str]]:
     """
