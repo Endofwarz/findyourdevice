@@ -43,7 +43,7 @@ def sniff_sep(path: Path, default=","):
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             sample = f.read(4096)
-        dialect = csv.Sniffer().sniff(sample, delimiters=[",",";","|","\t"])
+        dialect = csv.Sniffer().sniff(sample, delimiters=[ ",",";","|","\t"])
         return dialect.delimiter
     except Exception:
         first_line = sample.splitlines()[0] if 'sample' in locals() and sample else ""
@@ -86,7 +86,7 @@ def parse_year(s):
 def parse_inches(s):
     if s is None: return np.nan
     t = str(s).lower()
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:inches|inch|\"|in\b)", t)
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:inches|inch|"|"")|in\b)", t)
     if m: 
         v = float(m.group(1))
         return v if 3.0 <= v <= 8.5 else np.nan
@@ -240,7 +240,7 @@ def load_any_csvs(raw_dir: Path, debug=False):
             feats = df[fe].astype(str)
         else:
             text_cols = [c for c in [di, os_, fe] if c]
-            feats = df[text_cols].astype(str).agg(" ".join, axis=1) if text_cols else pd.Series([""]*len(df))
+            feats = df[text_cols].astype(str).agg(" ".join, axis=1) if text_cols else pd.Series(["",] * len(df))
         feats_l = feats.str.lower()
         flags = []
         for label, keys in FEATURE_KEYS.items():

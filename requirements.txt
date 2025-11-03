@@ -10,3 +10,6 @@ youtube-transcript-api
 beautifulsoup4>=4.12.2
 lxml
 httpx
+google-generativeai
+playwright
+thefuzz

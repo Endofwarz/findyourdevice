@@ -3,13 +3,17 @@ import csv
 import time
 import re
 
-# This script requires the google-generativeai package.
-# Please install it using: pip install google-generativeai
+# This script requires the google-generativeai and python-dotenv packages.
+# Please install them using: pip install google-generativeai python-dotenv
 import google.generativeai as genai
 
-# IMPORTANT: Configure your Gemini API key here.
+import os
+from dotenv import load_dotenv
+
+# IMPORTANT: Configure your Gemini API key in the backend/.env file.
 # You can get a key from https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+load_dotenv(dotenv_path="backend/.env")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 def list_models():
     """Lists available Gemini models."""
@@ -27,7 +31,7 @@ def list_models():
         print("No models found that support generateContent.")
     return models_found
 
-def get_msrp_from_gemini(brand, model):
+def get_msrp_from_gemini(brand, phone_model, gemini_model_name):
     """
     Gets the MSRP for a phone from Gemini.
     """
@@ -36,9 +40,9 @@ def get_msrp_from_gemini(brand, model):
         return None
 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.0-pro')
+    model = genai.GenerativeModel(gemini_model_name)
 
-    prompt = f"What is the Manufacturer's Suggested Retail Price (MSRP) of the {brand} {model} in EUR? Please provide only the price as a number (e.g., 799.99)."
+    prompt = f"What is the Manufacturer's Suggested Retail Price (MSRP) of the {brand} {phone_model} in EUR? Please provide only the price as a number (e.g., 799.99)."
     try:
         response = model.generate_content(prompt)
         price_str = response.text.strip()
@@ -48,16 +52,19 @@ def get_msrp_from_gemini(brand, model):
             price = float(match.group(1).replace(",", ""))
             return price
     except Exception as e:
-        print(f"Error getting price for {brand} {model}: {e}")
+        print(f"Error getting price for {brand} {phone_model}: {e}")
     return None
+
+import sys
+sys.path.append('.')
+
+from backend.gsma_scraper import _search_phone_url
+from tools.gsmarena_scraper import get_price_from_gsmarena
 
 def generate_msrp_prices():
     """
     Generates a CSV file with MSRP prices for phones from 2023 onwards.
     """
-    if not list_models():
-        return
-
     # Load the phones dataset
     try:
         df = pd.read_csv("data/processed/phones_clean.csv")
@@ -75,14 +82,25 @@ def generate_msrp_prices():
         brand = row["Brand"]
         model = row["Model"]
         slug = row["Slug"]
-        print(f"Getting price for {brand} {model}...")
-        price = get_msrp_from_gemini(brand, model)
+        
+        # Find the phone page URL
+        url = _search_phone_url(brand, model)
+
+        if not url:
+            print(f"Could not find URL for {brand} {model}")
+            continue
+
+        # The price is on a separate tab, so we need to modify the URL
+        price_url = url.replace(".php", "-price.php")
+
+        print(f"Getting price for {brand} {model} from {price_url}...")
+        price = get_price_from_gsmarena(price_url)
         if price:
             msrp_data.append([slug, price])
             print(f"  -> Price: {price} EUR")
         else:
             print("  -> Price not found.")
-        # Add a delay to avoid hitting API rate limits
+        # Add a delay to avoid getting blocked
         time.sleep(1)
 
     # Write to CSV

@@ -582,15 +582,13 @@ function Gallery({ urls = [], brand, model }) {
     setImages(newImages);
   };
 
-  const goToPrevious = (e) => {
-    e.stopPropagation();
+  const goToPrevious = () => {
     const isFirstImage = currentIndex === 0;
     const newIndex = isFirstImage ? images.length - 1 : currentIndex - 1;
     setCurrentIndex(newIndex);
   };
 
-  const goToNext = (e) => {
-    e.stopPropagation();
+  const goToNext = () => {
     const isLastImage = currentIndex === images.length - 1;
     const newIndex = isLastImage ? 0 : currentIndex + 1;
     setCurrentIndex(newIndex);
@@ -625,7 +623,7 @@ function Gallery({ urls = [], brand, model }) {
 
   return (
     <div className="relative w-full aspect-square overflow-hidden rounded-xl bg-slate-100" onClick={openModal}>
-      <img src={currentUrl} alt={`${brand} ${model}`} className="w-full h-full object-cover cursor-pointer" onError={handleImageError} />
+      <img src={currentUrl} alt={`${brand} ${model}`} className="w-full h-full object-contain cursor-pointer" onError={handleImageError} />
       {images.length > 1 && (
         <>
           <button onClick={goToPrevious} className="absolute top-1/2 left-2 transform -translate-y-1/2 bg-black bg-opacity-50 text-white p-2 rounded-full z-10">
@@ -638,8 +636,8 @@ function Gallery({ urls = [], brand, model }) {
       )}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50" onClick={closeModal}>
-          <button onClick={closeModal} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
-          <img src={currentUrl} alt={`${brand} ${model}`} className="max-w-[90vw] max-h-[90vh] object-contain" onClick={closeModal} />
+          <button onClick={(e) => { e.stopPropagation(); closeModal(); }} className="absolute top-4 right-4 text-white text-3xl z-50">&times;</button>
+          <img src={currentUrl} alt={`${brand} ${model}`} className="max-w-[90vw] max-h-[90vh] object-contain" onClick={(e) => { e.stopPropagation(); closeModal(); }} />
         </div>
       )}
     </div>
